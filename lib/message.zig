@@ -1,0 +1,354 @@
+const std = @import("std");
+const debug = std.debug;
+const linux = std.os.linux;
+const mem = std.mem;
+const os = std.os;
+
+fn nl_align(len: usize) usize {
+    return mem.alignForward(usize, len, linux.rtattr.ALIGNTO);
+}
+
+const NLMSG_HDRLEN = nl_align(@sizeOf(linux.nlmsghdr));
+
+const nlmsgerr = extern struct {
+    code: c_int,
+    msg: linux.nlmsghdr,
+};
+
+pub const AckResponse = Response(linux.NetlinkMessageType.ERROR, linux.nlmsghdr);
+
+pub const Attr = packed struct {
+    len: u16,
+    // Note to self: to support big endian machines, I think I could use @Type()
+    // to reorder these fields.
+    type: u14,
+    net_byteorder: bool,
+    nested: bool,
+
+    pub fn init_read(buf: []u8) error{OutOfMemory}!*Attr {
+        if (buf.len < @sizeOf(Attr)) return error.OutOfMemory;
+        const attr: *Attr = @ptrCast(@alignCast(buf.ptr));
+        if (buf.len < attr.len) return error.OutOfMemory;
+        return attr;
+    }
+
+    pub fn init_write(buf: []u8) error{OutOfMemory}!*Attr {
+        if (buf.len < @sizeOf(Attr)) return error.OutOfMemory;
+        const attr: *Attr = @ptrCast(@alignCast(buf.ptr));
+        attr.*.len = @intCast(buf.len);
+        attr.*.type = 0;
+        attr.*.net_byteorder = false;
+        attr.*.nested = false;
+        return attr;
+    }
+
+    pub fn size(self: Attr) u16 {
+        return self.len - @sizeOf(Attr);
+    }
+
+    pub fn read_int(self: *Attr, comptime T: type) error{InvalidAttrCast}!*T {
+        if (@sizeOf(T) + @sizeOf(Attr) != self.len) return error.InvalidAttrCast;
+        const start: [*]u8 = @ptrCast(self);
+        return @ptrCast(start + @sizeOf(Attr));
+    }
+
+    pub fn read_slice(self: *Attr) []u8 {
+        const start: [*]u8 = @ptrCast(self);
+        return start[@sizeOf(Attr)..self.len];
+    }
+};
+
+test "Attr bit fields" {
+    const native_endian = @import("builtin").cpu.arch.endian();
+    const expect = std.testing.expect;
+    const expectEqual = std.testing.expectEqual;
+
+    switch (native_endian) {
+        .Little => {
+            var actual = [_]u8{ 4, 0, 3, 0 };
+            var expected = actual;
+            var end: usize = 4;
+            var attr = try Attr.init_read(actual[0..end]);
+
+            try expectEqual(attr.len, 4);
+            try expectEqual(attr.type, 3);
+            try expectEqual(false, attr.nested);
+            try expectEqual(false, attr.net_byteorder);
+
+            attr.*.nested = true;
+            expected[3] = 0x80;
+            try expectEqual(expected, actual);
+
+            attr.*.type = 300;
+            expected[2] = 300 & 0x00ff;
+            expected[3] |= (300 & 0xff00) >> 8;
+            try expectEqual(expected, actual);
+
+            attr.*.net_byteorder = true;
+            expected[3] |= 0x40;
+            try expectEqual(expected, actual);
+        },
+        .Big => {
+            // TODO: test this in an emulator
+            try expect(false);
+        },
+    }
+}
+
+fn put_type(comptime T: type, buf: []u8) error{OutOfMemory}!*T {
+    if (nl_align(@sizeOf(T)) > buf.len) return error.OutOfMemory;
+    return @ptrCast(@alignCast(buf.ptr));
+}
+
+pub fn Request(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) type {
+    return struct {
+        nlh: *linux.nlmsghdr,
+        hdr: *T,
+        i: usize,
+        buf: []u8,
+
+        const Self = @This();
+
+        pub fn init(seq: u16, buf: []u8) error{OutOfMemory}!Self {
+            var nlh = try put_type(linux.nlmsghdr, buf);
+            nlh.*.type = nlmsg_type;
+            nlh.*.flags = @intCast(linux.NLM_F_REQUEST);
+            nlh.*.seq = seq;
+            nlh.*.pid = 0;
+            const hdr = try put_type(T, buf[NLMSG_HDRLEN..]);
+
+            return Self{
+                .nlh = nlh,
+                .hdr = hdr,
+                .i = NLMSG_HDRLEN + nl_align(@sizeOf(T)),
+                .buf = buf,
+            };
+        }
+
+        // `nlattr.nla_len` includes the size of the header, but the `len`
+        // argument should only measure the data length.
+        pub fn add_attr(self: *Self, type_: u14, len: u16) error{OutOfMemory}!*Attr {
+            const total_len = len + @sizeOf(Attr);
+            const aligned_len = nl_align(total_len);
+
+            if (aligned_len > self.buf.len - self.i) return error.OutOfMemory;
+            // Because the aligned length is strictly greater than the actual
+            // length, allocating the Attr will not fail.
+            const attr = Attr.init_write(self.buf[self.i .. self.i + total_len]) catch unreachable;
+            attr.*.type = type_;
+            self.i += aligned_len;
+            return attr;
+        }
+
+        pub fn add_empty(self: *Self, type_: u14) error{OutOfMemory}!*Attr {
+            return try self.add_attr(type_, 0);
+        }
+
+        //pub fn add_nest(self: *Self, type_: u14) error{OutOfMemory}!*Attr {
+        //}
+
+        pub fn add_int(self: *Self, type_: u14, comptime Int: type, val: Int) error{OutOfMemory}!*Attr {
+            const attr = try self.add_attr(type_, @sizeOf(Int));
+            attr.as(Int).* = val;
+            return attr;
+        }
+
+        pub fn add_str(self: *Self, type_: u14, str: [:0]u8) error{OutOfMemory}!*Attr {
+            var attr = try self.add_attr(type_, @intCast(str.len + 1));
+            const dst = attr.read_slice();
+            debug.assert(dst.len == str.len + 1);
+            @memcpy(dst, str[0 .. str.len + 1]);
+            return attr;
+        }
+
+        pub fn done(self: Self) []u8 {
+            self.nlh.*.len = @intCast(self.i);
+            return self.buf[0..self.i];
+        }
+    };
+}
+
+pub fn Response(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) type {
+    return struct {
+        i: usize,
+        done: bool,
+        buf: []u8,
+        seq: u32,
+
+        pub const Payload = struct {
+            value: *T,
+            attrs: []u8,
+            i: usize,
+
+            fn init(value: *T, attrs: []u8) Payload {
+                return Payload{ .value = value, .attrs = attrs, .i = 0 };
+            }
+
+            pub fn next(self: *Payload) !?*Attr {
+                if (self.i >= self.attrs.len) return null;
+
+                const attr = try Attr.init_read(self.attrs[self.i..]);
+                if (attr.len == 0) return error.InvalidResponse;
+                self.i += nl_align(attr.len);
+
+                //if (self.i + @sizeOf(linux.rtattr) > self.attrs.len) return error.InvalidResponse;
+                //const len = mem.readIntSliceNative(u16, self.attrs[self.i .. self.i + @sizeOf(u16)]);
+                //if (len < @sizeOf(linux.rtattr) or len > self.attrs.len - self.i) return error.InvalidResponse;
+                //self.i += @sizeOf(u16);
+
+                //switch (len - 2 * @sizeOf(u16
+
+                //const type_ = mem.readIntSliceNative(u16, self.attrs[self.i .. self.i + @sizeOf(u16)]);
+                //self.i += @sizeOf(u16);
+
+                //var attr = Attr{
+                //    .nested = (type_ & NLA_F_NESTED) == NLA_F_NESTED,
+                //    .net_byteorder = (type_ & NLA_F_NET_BYTEORDER) == NLA_F_NET_BYTEORDER,
+                //    .type = @truncate(type_),
+                //    .value = self.attrs[self.i .. self.i + len - @sizeOf(@TypeOf(len)) - @sizeOf(@TypeOf(type_))],
+                //};
+                //self.i += nl_align(attr.value.len);
+                return attr;
+            }
+        };
+
+        pub const Message = union(enum) {
+            done: void,
+            more: void,
+            payload: Payload,
+        };
+
+        const Self = @This();
+
+        pub fn init(seq: u32, buf: []u8) Self {
+            return Self{
+                .i = 0,
+                .done = false,
+                .buf = buf,
+                .seq = seq,
+            };
+        }
+
+        pub fn next(self: *Self) !Message {
+            if (self.done) return Message{ .done = void{} };
+            if (self.i >= self.buf.len) return Message{ .more = void{} };
+
+            if (self.buf.len < @sizeOf(linux.nlmsghdr)) return error.InvalidResponse;
+
+            const start = self.i;
+            const nlh: *linux.nlmsghdr = @ptrCast(@alignCast(self.buf.ptr + start));
+            if (nlh.len < @sizeOf(linux.nlmsghdr) or nlh.len > self.buf.len) return error.InvalidResponse;
+
+            const len = mem.alignForward(usize, nlh.len, linux.rtattr.ALIGNTO);
+            self.*.i += len;
+
+            if (nlh.seq != self.seq) return error.InvalidResponse;
+
+            switch (nlh.*.type) {
+                .DONE => {
+                    self.*.done = true;
+                    return Message{ .done = void{} };
+                },
+                .ERROR => {
+                    const payload: *nlmsgerr = @ptrCast(@alignCast(self.buf.ptr + start + NLMSG_HDRLEN));
+                    const code = if (payload.*.code >= 0) payload.*.code else -payload.*.code;
+                    self.*.done = true;
+                    const errno: linux.E = @enumFromInt(code);
+                    switch (errno) {
+                        .SUCCESS => if (nlmsg_type == linux.NetlinkMessageType.ERROR) {
+                            return Message{ .payload = Payload.init(&payload.*.msg, &[_]u8{}) };
+                        } else {
+                            return Message{ .done = void{} };
+                        },
+                        .INVAL => return error.InvalidRequest,
+                        .NODEV => return error.NoDevice,
+                        .PERM => return error.AccessDenied,
+                        else => |err| return os.unexpectedErrno(err),
+                    }
+                },
+                else => |type_| {
+                    if (type_ != nlmsg_type) return error.UnexpectedType;
+
+                    const value: *T = @ptrCast(@alignCast(self.buf.ptr + start + NLMSG_HDRLEN));
+                    const attr_start = start + NLMSG_HDRLEN + mem.alignForward(usize, @sizeOf(T), linux.rtattr.ALIGNTO);
+                    const attr_end = start + len;
+                    return Message{ .payload = Payload.init(value, self.buf[attr_start..attr_end]) };
+                },
+            }
+        }
+    };
+}
+
+test "parse RTM_NEWLINK response" {
+    const expect = std.testing.expect;
+    const expectEqual = std.testing.expectEqual;
+    const expectEqualSlices = std.testing.expectEqualSlices;
+
+    const c = @cImport({
+        @cInclude("linux/if.h");
+        @cInclude("linux/if_arp.h");
+    });
+
+    const raw = @embedFile("testdata/rtm_newlink_combined.bin");
+    const LinkListResponse = Response(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
+    var res = LinkListResponse.init(1691933945, @constCast(raw));
+
+    {
+        var msg = try res.next();
+        switch (msg) {
+            .payload => |*payload| {
+                try expectEqual(payload.value.index, 1);
+                try expectEqual(@as(c_uint, @intCast(c.IFF_UP)), (payload.value.flags & c.IFF_UP));
+                try expectEqual(c.ARPHRD_LOOPBACK, payload.value.type);
+
+                var count: usize = 0;
+                while (try payload.next()) |attr| {
+                    switch (attr.type) {
+                        c.IFLA_IFNAME => {
+                            var name = [_]u8{ 'l', 'o', 0 };
+                            var start: usize = 0;
+                            try expectEqualSlices(u8, name[start..], attr.read_slice());
+                        },
+                        else => {},
+                    }
+                    count += 1;
+                }
+                try expectEqual(count, 31);
+            },
+            else => try expect(false),
+        }
+    }
+    {
+        var msg = try res.next();
+        switch (msg) {
+            .payload => |*payload| {
+                try expectEqual(payload.value.index, 2);
+                try expectEqual(@as(c_uint, @intCast(c.IFF_UP)), (payload.value.flags & c.IFF_UP));
+                try expectEqual(c.ARPHRD_ETHER, payload.value.type);
+
+                var count: usize = 0;
+                while (try payload.next()) |attr| {
+                    switch (attr.type) {
+                        c.IFLA_IFNAME => {
+                            var name: [:0]const u8 = "wlp0s20f3";
+                            name.len += 1;
+                            var start: usize = 0;
+                            try expectEqualSlices(u8, name[start..], attr.read_slice());
+                        },
+                        else => {},
+                    }
+                    count += 1;
+                }
+                try expectEqual(count, 34);
+            },
+            else => try expect(false),
+        }
+    }
+    {
+        var msg = try res.next();
+        switch (msg) {
+            .done => {},
+            else => try expect(false),
+        }
+    }
+}
