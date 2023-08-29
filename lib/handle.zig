@@ -4,7 +4,7 @@ const os = std.os;
 
 const message = @import("message.zig");
 
-pub fn MultiResponse(comptime T: type) type {
+fn MultiResponse(comptime T: type) type {
     return struct {
         h: Handle,
         res: ?T,
@@ -43,7 +43,7 @@ pub const Handle = struct {
     pub fn init(sk: os.socket_t, buf: []u8) Handle {
         return Handle{
             .buf = buf,
-            .seq = 0,
+            .seq = 1,
             .sk = sk,
         };
     }

@@ -12,6 +12,7 @@ const c = @cImport({
 });
 
 const nl = @import("netlink");
+const util = @import("util.zig");
 
 const rtgenmsg = extern struct {
     rtgen_family: u8,
@@ -22,11 +23,6 @@ const LinkGetRequest = nl.Request(linux.NetlinkMessageType.RTM_GETLINK, linux.if
 const LinkNewRequest = nl.Request(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
 const LinkDelRequest = nl.Request(linux.NetlinkMessageType.RTM_DELLINK, linux.ifinfomsg);
 const LinkResponse = nl.Response(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
-
-fn fatal(comptime format: []const u8, args: anytype) noreturn {
-    std.log.err(format, args);
-    process.exit(1);
-}
 
 pub fn run(args: *process.ArgIterator) !void {
     var buf = [_]u8{0} ** 4096;
@@ -46,7 +42,7 @@ pub fn run(args: *process.ArgIterator) !void {
     } else if (mem.eql(u8, cmd, "del")) {
         try del(&nlh, args);
     } else {
-        fatal("unknown link subcommand {s}\n", .{cmd});
+        util.fatal("unknown link subcommand {s}\n", .{cmd});
     }
 }
 
@@ -59,7 +55,7 @@ fn list(nlh: *nl.Handle) !void {
     var res = nlh.recv_all(LinkResponse);
     while (try res.next()) |payload| {
         const index: u32 = @intCast(payload.value.index);
-        if ((payload.value.flags & c.IFF_UP) != c.IFF_UP) continue;
+        //if ((payload.value.flags & c.IFF_UP) != c.IFF_UP) continue;
         switch (payload.value.type) {
             c.ARPHRD_ETHER, c.ARPHRD_IPGRE, c.ARPHRD_LOOPBACK, c.ARPHRD_RAWIP, c.ARPHRD_TUNNEL => {},
             else => continue,
@@ -79,7 +75,7 @@ fn list(nlh: *nl.Handle) !void {
 }
 
 fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
-    const name = args.next() orelse fatal("link name is required\n", .{});
+    const name = args.next() orelse util.fatal("link name is required\n", .{});
 
     var req = try nlh.new_req(LinkGetRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
@@ -102,8 +98,8 @@ fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 }
 
 fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
-    const name = args.next() orelse fatal("link name is required\n", .{});
-    const type_ = args.next() orelse fatal("link type is required\n", .{});
+    const name = args.next() orelse util.fatal("link name is required\n", .{});
+    const type_ = args.next() orelse util.fatal("link type is required\n", .{});
 
     var req = try nlh.new_req(LinkNewRequest);
     req.nlh.*.flags |= (linux.NLM_F_CREATE | linux.NLM_F_EXCL);
@@ -121,7 +117,7 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 }
 
 fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {
-    const name = args.next() orelse fatal("link name is required\n", .{});
+    const name = args.next() orelse util.fatal("link name is required\n", .{});
 
     var req = try nlh.new_req(LinkDelRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
@@ -131,7 +127,7 @@ fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 }
 
 fn set(nlh: *nl.Handle, args: *process.ArgIterator) !void {
-    const name = args.next() orelse fatal("link name is required\n", .{});
+    const name = args.next() orelse util.fatal("link name is required\n", .{});
 
     var req = try nlh.new_req(LinkNewRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
@@ -144,11 +140,11 @@ fn set(nlh: *nl.Handle, args: *process.ArgIterator) !void {
             req.hdr.*.change = 1; // IFF_UP
             req.hdr.*.flags = 1;
         } else {
-            fatal("unknown attribute {s}\n", .{arg});
+            util.fatal("unknown attribute {s}\n", .{arg});
         }
     }
 
-    if (!any) fatal("must provide one or more attributes\n", .{});
+    if (!any) util.fatal("must provide one or more attributes\n", .{});
 
     try nlh.send(req);
     _ = try nlh.recv_ack();

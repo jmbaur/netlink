@@ -49,7 +49,7 @@ pub const Attr = packed struct {
     pub fn read_int(self: *Attr, comptime T: type) error{InvalidAttrCast}!*T {
         if (@sizeOf(T) + @sizeOf(Attr) != self.len) return error.InvalidAttrCast;
         const start: [*]u8 = @ptrCast(self);
-        return @ptrCast(start + @sizeOf(Attr));
+        return @ptrCast(@alignCast(start + @sizeOf(Attr)));
     }
 
     pub fn read_slice(self: *Attr) []u8 {
@@ -147,9 +147,9 @@ pub fn Request(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) 
         //pub fn add_nest(self: *Self, type_: u14) error{OutOfMemory}!*Attr {
         //}
 
-        pub fn add_int(self: *Self, type_: u14, comptime Int: type, val: Int) error{OutOfMemory}!*Attr {
+        pub fn add_int(self: *Self, comptime Int: type, type_: u14, val: Int) error{OutOfMemory}!*Attr {
             const attr = try self.add_attr(type_, @sizeOf(Int));
-            attr.as(Int).* = val;
+            (attr.read_int(Int) catch unreachable).* = val;
             return attr;
         }
 

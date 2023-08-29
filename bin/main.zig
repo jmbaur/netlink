@@ -7,7 +7,9 @@ const mem = std.mem;
 const os = std.os;
 const process = std.process;
 
+const addr = @import("addr.zig");
 const link = @import("link.zig");
+const util = @import("util.zig");
 
 const usage_main =
     \\Usage: plog [options]
@@ -20,23 +22,6 @@ const usage_main =
     \\
 ;
 
-fn fatal(comptime format: []const u8, args: anytype) noreturn {
-    std.log.err(format, args);
-    process.exit(1);
-}
-
-fn flag_is_help(flag: [:0]const u8) bool {
-    const flag_h = "-h";
-    const flag_help = "--help";
-    return mem.eql(u8, flag, flag_h) or mem.eql(u8, flag, flag_help);
-}
-
-fn flag_is_version(flag: [:0]const u8) bool {
-    const flag_v = "-v";
-    const flag_version = "--version";
-    return mem.eql(u8, flag, flag_v) or mem.eql(u8, flag, flag_version);
-}
-
 pub fn main() !void {
     var gpa = heap.GeneralPurposeAllocator(.{}){};
     var arena = heap.ArenaAllocator.init(gpa.allocator());
@@ -46,17 +31,19 @@ pub fn main() !void {
     defer args.deinit();
 
     _ = args.next().?; // program name
-    const cmd = args.next() orelse fatal("command is required\n", .{});
-    if (flag_is_help(cmd)) {
+    const cmd = args.next() orelse util.fatal("command is required\n", .{});
+    if (util.flag_is_help(cmd)) {
         debug.print("{s}", .{usage_main});
         return;
-    } else if (flag_is_version(cmd)) {
+    } else if (util.flag_is_version(cmd)) {
         const build_options = @import("build_options");
         try io.getStdOut().writeAll(build_options.version ++ "\n");
         return;
+    } else if (mem.eql(u8, cmd, "a") or mem.eql(u8, cmd, "addr")) {
+        return addr.run(&args);
     } else if (mem.eql(u8, cmd, "l") or mem.eql(u8, cmd, "link")) {
         return link.run(&args);
     }
 
-    fatal("unknown command {s}", .{cmd});
+    util.fatal("unknown command {s}", .{cmd});
 }
