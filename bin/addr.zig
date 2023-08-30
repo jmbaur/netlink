@@ -41,6 +41,8 @@ const LinkResponse = nl.Response(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifi
 
 const LinkNames = util.SparseList([]u8);
 
+const LINK_TABLE_WIDTH: usize = 64;
+
 pub fn run(args: *process.ArgIterator) !void {
     var buf = [_]u8{0} ** 4096;
     var sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
@@ -105,13 +107,6 @@ fn formatCidr(writer: anytype, addr: net.Address, len: u8) !u64 {
     return cw.bytes_written;
 }
 
-fn writeLinkTableSeparator(writer: anytype) !void {
-    try writer.writeByte('|');
-    try writer.writeByteNTimes('-', 64);
-    try writer.writeByte('|');
-    try writer.writeByte('\n');
-}
-
 fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
     var arena = heap.ArenaAllocator.init(heap.page_allocator);
     defer arena.deinit();
@@ -145,9 +140,9 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
     };
 
     var stdout = stdout_buffer.writer();
-    try writeLinkTableSeparator(stdout);
-    try fmt.format(stdout, "| {s:<16} | {s:<43} |\n", .{ "name", "ip" });
-    try writeLinkTableSeparator(stdout);
+    try util.writeTableSeparator(stdout, LINK_TABLE_WIDTH);
+    try fmt.format(stdout, "| {s:<16} | {s:<43} |\n", .{ "name", "address" });
+    try util.writeTableSeparator(stdout, LINK_TABLE_WIDTH);
 
     while (try res.next()) |payload| {
         if (payload.value.family != linux.AF.INET and payload.value.family != linux.AF.INET6) continue;
@@ -185,7 +180,7 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
             }
         }
     }
-    try writeLinkTableSeparator(stdout);
+    try util.writeTableSeparator(stdout, LINK_TABLE_WIDTH);
 }
 
 fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {

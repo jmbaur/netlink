@@ -1,6 +1,8 @@
 const std = @import("std");
 const debug = std.debug;
+const fmt = std.fmt;
 const heap = std.heap;
+const io = std.io;
 const linux = std.os.linux;
 const mem = std.mem;
 const os = std.os;
@@ -23,6 +25,51 @@ const LinkGetRequest = nl.Request(linux.NetlinkMessageType.RTM_GETLINK, linux.if
 const LinkNewRequest = nl.Request(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
 const LinkDelRequest = nl.Request(linux.NetlinkMessageType.RTM_DELLINK, linux.ifinfomsg);
 const LinkResponse = nl.Response(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
+
+const Link = struct {
+    id: u32,
+    name: ?[]u8,
+    type: u14,
+    up: bool,
+
+    fn init(id: u32, type_: u14, up: bool) Link {
+        return Link{
+            .id = id,
+            .name = null,
+            .type = type_,
+            .up = up,
+        };
+    }
+
+    fn writeRow(self: Link, out_stream: anytype) !void {
+        try fmt.format(out_stream, "| {d:<3} | ", .{self.id});
+        if (self.name) |name| {
+            try fmt.format(out_stream, "{s:<16}", .{name});
+        } else {
+            try out_stream.writeByteNTimes(' ', 15);
+        }
+        try out_stream.writeAll(" | ");
+
+        try switch (self.type) {
+            c.ARPHRD_ETHER => fmt.format(out_stream, "{s:<9}", .{"ether"}),
+            c.ARPHRD_TUNNEL => fmt.format(out_stream, "{s:<9}", .{"ipip"}),
+            c.ARPHRD_LOOPBACK => fmt.format(out_stream, "{s:<9}", .{"loopback"}),
+            c.ARPHRD_IPGRE => fmt.format(out_stream, "{s:<9}", .{"gre"}),
+            c.ARPHRD_NETLINK => fmt.format(out_stream, "{s:<9}", .{"netlink"}),
+            else => |type_| fmt.format(out_stream, "{d:<9}", .{type_}),
+        };
+        try out_stream.writeAll(" | ");
+
+        if (self.up) {
+            try out_stream.writeByte('*');
+        } else {
+            try out_stream.writeByte(' ');
+        }
+        try out_stream.writeAll("  |\n");
+    }
+};
+
+const ADDR_TABLE_WIDTH: usize = 40;
 
 pub fn run(args: *process.ArgIterator) !void {
     var buf = [_]u8{0} ** 4096;
@@ -53,25 +100,33 @@ fn list(nlh: *nl.Handle) !void {
     try nlh.send(req);
 
     var res = nlh.recv_all(LinkResponse);
+
+    var stdout_buffer = io.bufferedWriter(io.getStdOut().writer());
+    defer stdout_buffer.flush() catch |err| {
+        debug.print("unable to flush stdout: {}\n", .{err});
+    };
+
+    var stdout = stdout_buffer.writer();
+    try util.writeTableSeparator(stdout, ADDR_TABLE_WIDTH);
+    try fmt.format(stdout, "| {s:<3} | {s:<15} | {s:<9} | {s:<2} |\n", .{ "id", "name", "type", "up" });
+    try util.writeTableSeparator(stdout, ADDR_TABLE_WIDTH);
+
     while (try res.next()) |payload| {
-        const index: u32 = @intCast(payload.value.index);
-        //if ((payload.value.flags & c.IFF_UP) != c.IFF_UP) continue;
-        switch (payload.value.type) {
-            c.ARPHRD_ETHER, c.ARPHRD_IPGRE, c.ARPHRD_LOOPBACK, c.ARPHRD_RAWIP, c.ARPHRD_TUNNEL => {},
-            else => continue,
-        }
+        var link = Link.init(@intCast(payload.value.index), @intCast(payload.value.type), (payload.value.flags & c.IFF_UP) == c.IFF_UP);
 
         var p = payload;
-        while (try p.next()) |attr| {
-            switch (attr.type) {
-                c.IFLA_IFNAME => {
-                    debug.print("{d:>2}: {s:<16}\n", .{ index, attr.read_slice() });
-                    break;
-                },
-                else => {},
-            }
-        }
+        while (try p.next()) |attr| switch (attr.type) {
+            c.IFLA_IFNAME => {
+                link.name = attr.read_slice();
+                break;
+            },
+            else => {},
+        };
+
+        try link.writeRow(stdout);
     }
+
+    try util.writeTableSeparator(stdout, ADDR_TABLE_WIDTH);
 }
 
 fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {

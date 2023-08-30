@@ -20,6 +20,13 @@ pub fn flag_is_version(flag: [:0]const u8) bool {
     return mem.eql(u8, flag, flag_v) or mem.eql(u8, flag, flag_version);
 }
 
+pub fn writeTableSeparator(writer: anytype, len: usize) !void {
+    try writer.writeByte('|');
+    try writer.writeByteNTimes('-', len);
+    try writer.writeByte('|');
+    try writer.writeByte('\n');
+}
+
 /// This data structures is like `std.ArrayList`, except it initializes all
 /// items to `null`.  It is useful for storing links because they are _almost_
 /// contiguous.
