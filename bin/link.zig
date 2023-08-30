@@ -30,6 +30,7 @@ const Link = struct {
     id: u32,
     name: ?[]u8,
     type: u14,
+    addr: ?[6]u8,
     up: bool,
 
     fn init(id: u32, type_: u14, up: bool) Link {
@@ -37,6 +38,7 @@ const Link = struct {
             .id = id,
             .name = null,
             .type = type_,
+            .addr = null,
             .up = up,
         };
     }
@@ -60,6 +62,13 @@ const Link = struct {
         };
         try out_stream.writeAll(" | ");
 
+        if (self.addr) |addr| {
+            try fmt.format(out_stream, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{ addr[0], addr[1], addr[2], addr[3], addr[4], addr[5] });
+        } else {
+            try out_stream.writeByteNTimes(' ', 17);
+        }
+        try out_stream.writeAll(" | ");
+
         if (self.up) {
             try out_stream.writeByte('*');
         } else {
@@ -69,7 +78,7 @@ const Link = struct {
     }
 };
 
-const ADDR_TABLE_WIDTH: usize = 40;
+const LINK_TABLE_WIDTH: usize = 60;
 
 pub fn run(args: *process.ArgIterator) !void {
     var buf = [_]u8{0} ** 4096;
@@ -107,26 +116,29 @@ fn list(nlh: *nl.Handle) !void {
     };
 
     var stdout = stdout_buffer.writer();
-    try util.writeTableSeparator(stdout, ADDR_TABLE_WIDTH);
-    try fmt.format(stdout, "| {s:<3} | {s:<15} | {s:<9} | {s:<2} |\n", .{ "id", "name", "type", "up" });
-    try util.writeTableSeparator(stdout, ADDR_TABLE_WIDTH);
+    try util.writeTableSeparator(stdout, LINK_TABLE_WIDTH);
+    try fmt.format(stdout, "| {s:<3} | {s:<15} | {s:<9} | {s:<17} | {s:<2} |\n", .{ "id", "name", "type", "address", "up" });
+    try util.writeTableSeparator(stdout, LINK_TABLE_WIDTH);
 
     while (try res.next()) |payload| {
         var link = Link.init(@intCast(payload.value.index), @intCast(payload.value.type), (payload.value.flags & c.IFF_UP) == c.IFF_UP);
 
         var p = payload;
         while (try p.next()) |attr| switch (attr.type) {
-            c.IFLA_IFNAME => {
-                link.name = attr.read_slice();
-                break;
+            @intFromEnum(linux.IFLA.IFNAME) => link.name = attr.read_slice(),
+            @intFromEnum(linux.IFLA.ADDRESS) => {
+                const addr = attr.read_slice();
+                debug.assert(addr.len == 6);
+                link.addr = addr[0..6].*;
             },
+            // TODO: read c.IFLA_LINKINFO with nested c.IFLA_INFO_KIND
             else => {},
         };
 
         try link.writeRow(stdout);
     }
 
-    try util.writeTableSeparator(stdout, ADDR_TABLE_WIDTH);
+    try util.writeTableSeparator(stdout, LINK_TABLE_WIDTH);
 }
 
 fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
