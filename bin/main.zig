@@ -9,6 +9,7 @@ const process = std.process;
 
 const addr = @import("addr.zig");
 const link = @import("link.zig");
+const netns = @import("netns.zig");
 const util = @import("util.zig");
 
 const usage_main =
@@ -43,6 +44,8 @@ pub fn main() !void {
         return addr.run(&args);
     } else if (mem.eql(u8, cmd, "l") or mem.eql(u8, cmd, "link")) {
         return link.run(&args);
+    } else if (mem.eql(u8, cmd, "ns")) {
+        return netns.run(&args);
     }
 
     util.fatal("unknown command {s}", .{cmd});
