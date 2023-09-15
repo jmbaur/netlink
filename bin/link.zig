@@ -179,8 +179,7 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     link_info.*.len = @intCast(req.i - start);
 
     try nlh.send(req);
-    var nlmsg = try nlh.recv_ack();
-    debug.print("{}\n", .{nlmsg});
+    _ = try nlh.recv_ack();
 }
 
 fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {

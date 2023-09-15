@@ -9,9 +9,20 @@ const os = std.os;
 const process = std.process;
 const time = std.time;
 
+const c = @cImport({
+    @cInclude("linux/net_namespace.h");
+});
+
+const nl = @import("netlink");
 const util = @import("util.zig");
 
 const NETNS_TABLE_WIDTH: usize = 53;
+
+const rtgenmsg = extern struct {
+    family: u8,
+};
+
+const NsidNewRequest = nl.Request(linux.NetlinkMessageType.RTM_NEWNSID, rtgenmsg);
 
 const PidFdOpenError = error{
     SystemFdQuotaExceeded,
@@ -136,6 +147,8 @@ pub fn run(args: *process.ArgIterator) !void {
         try del(args, state_dir);
     } else if (mem.eql(u8, cmd, "enter")) {
         try enter(args, state_dir);
+    } else if (mem.eql(u8, cmd, "set")) {
+        try set_id(args, state_dir);
     } else {
         util.fatal("unknown ns subcommand {s}\n", .{cmd});
     }
@@ -182,6 +195,27 @@ fn list(_: *process.ArgIterator, state: fs.Dir) !void {
     }
 
     try util.writeTableSeparator(stdout, NETNS_TABLE_WIDTH);
+}
+
+fn set_id(args: *process.ArgIterator, state: fs.Dir) !void {
+    const name = args.next() orelse util.fatal("name is required\n", .{});
+    const pid = try get_pid(state, name);
+
+    var buf = [_]u8{0} ** 4096;
+    var sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
+    defer os.close(sk);
+    var nlh = nl.Handle.init(sk, &buf);
+
+    var req = try nlh.new_req(NsidNewRequest);
+    req.hdr.*.family = os.AF.UNSPEC;
+
+    _ = try req.add_int(u32, c.NETNSA_PID, @as(u32, @intCast(pid)));
+    var nsid: i32 = -1;
+    _ = try req.add_int(u32, c.NETNSA_NSID, @as(u32, @bitCast(nsid)));
+    try nlh.send(req);
+
+    var nlmsg = try nlh.recv_ack();
+    debug.print("{}\n", .{nlmsg});
 }
 
 fn add(args: *process.ArgIterator, state: fs.Dir) !void {
