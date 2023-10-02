@@ -16,16 +16,6 @@ const c = @cImport({
 const nl = @import("netlink");
 const util = @import("util.zig");
 
-const rtgenmsg = extern struct {
-    rtgen_family: u8,
-};
-
-const LinkListRequest = nl.Request(linux.NetlinkMessageType.RTM_GETLINK, rtgenmsg);
-const LinkGetRequest = nl.Request(linux.NetlinkMessageType.RTM_GETLINK, linux.ifinfomsg);
-const LinkNewRequest = nl.Request(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
-const LinkDelRequest = nl.Request(linux.NetlinkMessageType.RTM_DELLINK, linux.ifinfomsg);
-const LinkResponse = nl.Response(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
-
 const Link = struct {
     id: u32,
     name: ?[]u8,
@@ -103,12 +93,12 @@ pub fn run(args: *process.ArgIterator) !void {
 }
 
 fn list(nlh: *nl.Handle) !void {
-    var req = try nlh.new_req(LinkListRequest);
-    req.hdr.*.rtgen_family = os.AF.PACKET;
+    var req = try nlh.new_req(nl.LinkListRequest);
+    req.hdr.*.family = os.AF.PACKET;
     req.nlh.*.flags |= linux.NLM_F_DUMP;
     try nlh.send(req);
 
-    var res = nlh.recv_all(LinkResponse);
+    var res = nlh.recv_all(nl.LinkResponse);
 
     var stdout_buffer = io.bufferedWriter(io.getStdOut().writer());
     defer stdout_buffer.flush() catch |err| {
@@ -144,10 +134,10 @@ fn list(nlh: *nl.Handle) !void {
 fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
-    var req = try nlh.new_req(LinkGetRequest);
+    var req = try nlh.new_req(nl.LinkGetRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
     try nlh.send(req);
-    var res = try nlh.recv_one(LinkResponse);
+    var res = try nlh.recv_one(nl.LinkResponse);
     const index: u32 = @intCast(res.value.index);
     debug.print("{d:>2}:", .{index});
 
@@ -168,7 +158,7 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
     const type_ = args.next() orelse util.fatal("link type is required\n", .{});
 
-    var req = try nlh.new_req(LinkNewRequest);
+    var req = try nlh.new_req(nl.LinkNewRequest);
     req.nlh.*.flags |= (linux.NLM_F_CREATE | linux.NLM_F_EXCL);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
 
@@ -185,7 +175,7 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
-    var req = try nlh.new_req(LinkDelRequest);
+    var req = try nlh.new_req(nl.LinkDelRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
 
     try nlh.send(req);
@@ -195,7 +185,7 @@ fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 fn set(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
-    var req = try nlh.new_req(LinkNewRequest);
+    var req = try nlh.new_req(nl.LinkNewRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
 
     var any = false;

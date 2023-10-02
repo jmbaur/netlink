@@ -18,11 +18,7 @@ const util = @import("util.zig");
 
 const NETNS_TABLE_WIDTH: usize = 53;
 
-const rtgenmsg = extern struct {
-    family: u8,
-};
-
-const NsidNewRequest = nl.Request(linux.NetlinkMessageType.RTM_NEWNSID, rtgenmsg);
+const NsidNewRequest = nl.Request(linux.NetlinkMessageType.RTM_NEWNSID, nl.rtgenmsg);
 
 const PidFdOpenError = error{
     SystemFdQuotaExceeded,

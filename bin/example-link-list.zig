@@ -12,12 +12,6 @@ const nl = @import("netlink");
 const util = @import("util.zig");
 
 const LinkNames = util.SparseList([]u8);
-const LinkListRequest = nl.Request(linux.NetlinkMessageType.RTM_GETLINK, rtgenmsg);
-const LinkListResponse = nl.Response(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
-
-const rtgenmsg = extern struct {
-    rtgen_family: u8,
-};
 
 pub fn main() !void {
     var mem_buf = [_]u8{0} ** 1024;
@@ -28,16 +22,16 @@ pub fn main() !void {
     var buf = [_]u8{0} ** 4096;
 
     const seq = 0;
-    var req = try LinkListRequest.init(seq, &buf);
+    var req = try nl.LinkListRequest.init(seq, &buf);
 
     req.nlh.*.flags = @intCast(linux.NLM_F_REQUEST | linux.NLM_F_ACK | linux.NLM_F_DUMP);
 
-    req.hdr.*.rtgen_family = os.AF.PACKET;
+    req.hdr.*.family = os.AF.PACKET;
     _ = try os.send(sk, req.done(), 0);
 
     recv: while (true) {
         const n = try os.recv(sk, &buf, 0);
-        var res = LinkListResponse.init(seq, buf[0..n]);
+        var res = nl.LinkResponse.init(seq, buf[0..n]);
         while (true) {
             var msg = try res.next();
             switch (msg) {

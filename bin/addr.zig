@@ -19,26 +19,6 @@ const util = @import("util.zig");
 
 const native_endian = @import("builtin").target.cpu.arch.endian();
 
-const ifaddrmsg = extern struct {
-    family: u8,
-    prefixlen: u8,
-    flags: u8,
-    scope: u8,
-    index: u32,
-};
-
-const rtgenmsg = extern struct {
-    rtgen_family: u8,
-};
-
-const AddrListRequest = nl.Request(linux.NetlinkMessageType.RTM_GETADDR, ifaddrmsg);
-const AddrNewRequest = nl.Request(linux.NetlinkMessageType.RTM_NEWADDR, ifaddrmsg);
-const AddrResponse = nl.Response(linux.NetlinkMessageType.RTM_NEWADDR, ifaddrmsg);
-
-const LinkListRequest = nl.Request(linux.NetlinkMessageType.RTM_GETLINK, rtgenmsg);
-const LinkGetRequest = nl.Request(linux.NetlinkMessageType.RTM_GETLINK, linux.ifinfomsg);
-const LinkResponse = nl.Response(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
-
 const LinkNames = util.SparseList([]u8);
 
 const ADDR_TABLE_WIDTH: usize = 64;
@@ -113,12 +93,12 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
 
     var links = try LinkNames.initCapacity(arena.allocator(), 8);
     {
-        var req = try nlh.new_req(LinkListRequest);
-        req.hdr.*.rtgen_family = os.AF.PACKET;
+        var req = try nlh.new_req(nl.LinkListRequest);
+        req.hdr.*.family = os.AF.PACKET;
         req.nlh.*.flags |= linux.NLM_F_DUMP;
         try nlh.send(req);
 
-        var res = nlh.recv_all(LinkResponse);
+        var res = nlh.recv_all(nl.LinkResponse);
         while (try res.next()) |payload| {
             var p = payload;
             while (try p.next()) |attr| if (attr.type == @intFromEnum(linux.IFLA.IFNAME)) {
@@ -127,12 +107,12 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
         }
     }
 
-    var req = try nlh.new_req(AddrListRequest);
+    var req = try nlh.new_req(nl.AddrListRequest);
     req.nlh.*.flags |= linux.NLM_F_DUMP;
     req.hdr.*.family = os.AF.UNSPEC;
     try nlh.send(req);
 
-    var res = nlh.recv_all(AddrResponse);
+    var res = nlh.recv_all(nl.AddrResponse);
 
     var stdout_buffer = io.bufferedWriter(io.getStdOut().writer());
     defer stdout_buffer.flush() catch |err| {
@@ -196,14 +176,14 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const addr = try net.Ip4Address.parse(addrStr, 0);
 
     const dev: u32 = blk: {
-        var req = try nlh.new_req(LinkGetRequest);
+        var req = try nlh.new_req(nl.LinkGetRequest);
         _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
         try nlh.send(req);
-        var res = try nlh.recv_one(LinkResponse);
+        var res = try nlh.recv_one(nl.LinkResponse);
         break :blk @intCast(res.value.index);
     };
 
-    var req = try nlh.new_req(AddrNewRequest);
+    var req = try nlh.new_req(nl.AddrNewRequest);
     req.nlh.*.flags |= linux.NLM_F_CREATE;
     req.hdr.*.family = linux.AF.INET;
     req.hdr.*.prefixlen = len;
