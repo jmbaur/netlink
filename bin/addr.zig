@@ -102,7 +102,7 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
         while (try res.next()) |payload| {
             var p = payload;
             while (try p.next()) |attr| if (attr.type == @intFromEnum(linux.IFLA.IFNAME)) {
-                try links.set(@intCast(payload.value.index), try arena.allocator().dupe(u8, attr.read_slice()));
+                try links.set(@intCast(payload.value.index), try arena.allocator().dupe(u8, attr.slice()));
             };
         }
     }
@@ -133,11 +133,11 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
                 c.IFA_ADDRESS => {
                     const addr = blk: {
                         if (payload.value.family == linux.AF.INET) {
-                            const bytes = attr.read_slice();
+                            const bytes = attr.slice();
                             debug.assert(bytes.len == 4);
                             break :blk net.Address.initIp4(bytes[0..4].*, 0);
                         } else {
-                            const bytes = attr.read_slice();
+                            const bytes = attr.slice();
                             debug.assert(bytes.len == 16);
                             break :blk net.Address.initIp6(bytes[0..16].*, 0, 0, 0);
                         }
@@ -177,7 +177,7 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 
     const dev: u32 = blk: {
         var req = try nlh.new_req(nl.LinkGetRequest);
-        _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
+        _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
         try nlh.send(req);
         var res = try nlh.recv_one(nl.LinkResponse);
         break :blk @intCast(res.value.index);

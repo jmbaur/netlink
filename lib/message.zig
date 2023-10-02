@@ -46,13 +46,13 @@ pub const Attr = packed struct {
         return self.len - @sizeOf(Attr);
     }
 
-    pub fn read_int(self: *Attr, comptime T: type) error{InvalidAttrCast}!*T {
+    pub fn int(self: *Attr, comptime T: type) error{InvalidAttrCast}!*T {
         if (@sizeOf(T) + @sizeOf(Attr) != self.len) return error.InvalidAttrCast;
         const start: [*]u8 = @ptrCast(self);
         return @ptrCast(@alignCast(start + @sizeOf(Attr)));
     }
 
-    pub fn read_slice(self: *Attr) []u8 {
+    pub fn slice(self: *Attr) []u8 {
         const start: [*]u8 = @ptrCast(self);
         return start[@sizeOf(Attr)..self.len];
     }
@@ -95,6 +95,16 @@ test "Attr bit fields" {
     }
 }
 
+pub const NestedAttr = struct {
+    attr: *Attr,
+    start: usize,
+    index: *usize,
+
+    pub fn end(self: NestedAttr) void {
+        self.attr.*.len = @intCast(self.index.* - self.start);
+    }
+};
+
 fn put_type(comptime T: type, buf: []u8) error{OutOfMemory}!*T {
     if (nl_align(@sizeOf(T)) > buf.len) return error.OutOfMemory;
     return @ptrCast(@alignCast(buf.ptr));
@@ -111,16 +121,19 @@ pub fn Request(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) 
 
         pub fn init(seq: u16, buf: []u8) error{OutOfMemory}!Self {
             var nlh = try put_type(linux.nlmsghdr, buf);
+            nlh.*.len = 0; // This will be set when `done()` is called.
             nlh.*.type = nlmsg_type;
             nlh.*.flags = @intCast(linux.NLM_F_REQUEST);
             nlh.*.seq = seq;
             nlh.*.pid = 0;
             const hdr = try put_type(T, buf[NLMSG_HDRLEN..]);
+            const hdr_len = nl_align(@sizeOf(T));
+            @memset(buf[NLMSG_HDRLEN..][0..hdr_len], 0);
 
             return Self{
                 .nlh = nlh,
                 .hdr = hdr,
-                .i = NLMSG_HDRLEN + nl_align(@sizeOf(T)),
+                .i = NLMSG_HDRLEN + hdr_len,
                 .buf = buf,
             };
         }
@@ -140,22 +153,37 @@ pub fn Request(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) 
             return attr;
         }
 
+        pub fn add_bytes(self: *Self, type_: u14, bytes: []const u8) error{OutOfMemory}!*Attr {
+            var attr = try self.add_attr(type_, @intCast(bytes.len));
+            const dst = attr.slice();
+            debug.assert(dst.len == bytes.len);
+            @memcpy(dst, bytes);
+            return attr;
+        }
+
         pub fn add_empty(self: *Self, type_: u14) error{OutOfMemory}!*Attr {
             return try self.add_attr(type_, 0);
         }
 
-        //pub fn add_nest(self: *Self, type_: u14) error{OutOfMemory}!*Attr {
-        //}
-
         pub fn add_int(self: *Self, comptime Int: type, type_: u14, val: Int) error{OutOfMemory}!*Attr {
             const attr = try self.add_attr(type_, @sizeOf(Int));
-            (attr.read_int(Int) catch unreachable).* = val;
+            (attr.int(Int) catch unreachable).* = val;
             return attr;
         }
 
-        pub fn add_str(self: *Self, type_: u14, str: [:0]u8) error{OutOfMemory}!*Attr {
+        pub fn add_nested(self: *Self, type_: u14) error{OutOfMemory}!NestedAttr {
+            var start = self.i;
+            var attr = try self.add_empty(type_);
+            return NestedAttr{
+                .attr = attr,
+                .start = start,
+                .index = &self.i,
+            };
+        }
+
+        pub fn add_str(self: *Self, type_: u14, str: [:0]const u8) error{OutOfMemory}!*Attr {
             var attr = try self.add_attr(type_, @intCast(str.len + 1));
-            const dst = attr.read_slice();
+            const dst = attr.slice();
             debug.assert(dst.len == str.len + 1);
             @memcpy(dst, str[0 .. str.len + 1]);
             return attr;
@@ -189,25 +217,8 @@ pub fn Response(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type)
 
                 const attr = try Attr.init_read(self.attrs[self.i..]);
                 if (attr.len == 0) return error.InvalidResponse;
+
                 self.i += nl_align(attr.len);
-
-                //if (self.i + @sizeOf(linux.rtattr) > self.attrs.len) return error.InvalidResponse;
-                //const len = mem.readIntSliceNative(u16, self.attrs[self.i .. self.i + @sizeOf(u16)]);
-                //if (len < @sizeOf(linux.rtattr) or len > self.attrs.len - self.i) return error.InvalidResponse;
-                //self.i += @sizeOf(u16);
-
-                //switch (len - 2 * @sizeOf(u16
-
-                //const type_ = mem.readIntSliceNative(u16, self.attrs[self.i .. self.i + @sizeOf(u16)]);
-                //self.i += @sizeOf(u16);
-
-                //var attr = Attr{
-                //    .nested = (type_ & NLA_F_NESTED) == NLA_F_NESTED,
-                //    .net_byteorder = (type_ & NLA_F_NET_BYTEORDER) == NLA_F_NET_BYTEORDER,
-                //    .type = @truncate(type_),
-                //    .value = self.attrs[self.i .. self.i + len - @sizeOf(@TypeOf(len)) - @sizeOf(@TypeOf(type_))],
-                //};
-                //self.i += nl_align(attr.value.len);
                 return attr;
             }
         };
@@ -260,8 +271,10 @@ pub fn Response(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type)
                         } else {
                             return Message{ .done = void{} };
                         },
+                        .EXIST => return error.AlreadyExists,
                         .INVAL => return error.InvalidRequest,
                         .NODEV => return error.NoDevice,
+                        .OPNOTSUPP => return error.NotSupported,
                         .PERM => return error.AccessDenied,
                         else => |err| return os.unexpectedErrno(err),
                     }
@@ -277,6 +290,41 @@ pub fn Response(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type)
             }
         }
     };
+}
+
+test "build RTM_NEWLINK request" {
+    const testing = std.testing;
+    // linux/if_link.h
+    const IFLA_INFO_KIND = 1;
+
+    var buf: [128]u8 = undefined;
+    const LinkNewRequest = Request(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
+    var req = try LinkNewRequest.init(1, &buf);
+
+    const name = "new-device";
+    const type_ = "dummy";
+
+    {
+        const attr = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
+        const len = @sizeOf(Attr) + name.len + 1;
+        try testing.expectEqual(len, attr.len);
+    }
+
+    var link_info = try req.add_nested(@intFromEnum(linux.IFLA.LINKINFO));
+    try testing.expectEqual(link_info.attr.len, @sizeOf(Attr));
+    var nested_len = nl_align(link_info.attr.len);
+
+    {
+        var attr = try req.add_str(IFLA_INFO_KIND, type_);
+        const len = @sizeOf(Attr) + type_.len + 1;
+        try testing.expectEqual(len, attr.len);
+        nested_len += nl_align(attr.len);
+    }
+    link_info.end();
+    try testing.expectEqual(nested_len, link_info.attr.len);
+
+    const msg = req.done();
+    try testing.expectEqual(msg.len, req.nlh.*.len);
 }
 
 test "parse RTM_NEWLINK response" {
@@ -307,7 +355,7 @@ test "parse RTM_NEWLINK response" {
                         c.IFLA_IFNAME => {
                             var name = [_]u8{ 'l', 'o', 0 };
                             var start: usize = 0;
-                            try expectEqualSlices(u8, name[start..], attr.read_slice());
+                            try expectEqualSlices(u8, name[start..], attr.slice());
                         },
                         else => {},
                     }
@@ -333,7 +381,7 @@ test "parse RTM_NEWLINK response" {
                             var name: [:0]const u8 = "wlp0s20f3";
                             name.len += 1;
                             var start: usize = 0;
-                            try expectEqualSlices(u8, name[start..], attr.read_slice());
+                            try expectEqualSlices(u8, name[start..], attr.slice());
                         },
                         else => {},
                     }

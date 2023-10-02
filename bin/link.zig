@@ -115,9 +115,9 @@ fn list(nlh: *nl.Handle) !void {
 
         var p = payload;
         while (try p.next()) |attr| switch (attr.type) {
-            @intFromEnum(linux.IFLA.IFNAME) => link.name = attr.read_slice(),
+            @intFromEnum(linux.IFLA.IFNAME) => link.name = attr.slice(),
             @intFromEnum(linux.IFLA.ADDRESS) => {
-                const addr = attr.read_slice();
+                const addr = attr.slice();
                 debug.assert(addr.len == 6);
                 link.addr = addr[0..6].*;
             },
@@ -135,7 +135,7 @@ fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
     var req = try nlh.new_req(nl.LinkGetRequest);
-    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
+    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
     try nlh.send(req);
     var res = try nlh.recv_one(nl.LinkResponse);
     const index: u32 = @intCast(res.value.index);
@@ -145,7 +145,7 @@ fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     while (try res.next()) |attr| {
         switch (attr.type) {
             c.IFLA_IFNAME => {
-                found_name = attr.read_slice();
+                found_name = attr.slice();
                 break;
             },
             else => {},
@@ -157,16 +157,45 @@ fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
     const type_ = args.next() orelse util.fatal("link type is required\n", .{});
+    const parent: u32 = blk: {
+        if (args.next()) |parent_name| {
+            var req = try nlh.new_req(nl.LinkGetRequest);
+            _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), parent_name);
+            try nlh.send(req);
+            var res = try nlh.recv_one(nl.LinkResponse);
+            break :blk @intCast(res.value.index);
+        } else {
+            break :blk 0;
+        }
+    };
 
     var req = try nlh.new_req(nl.LinkNewRequest);
     req.nlh.*.flags |= (linux.NLM_F_CREATE | linux.NLM_F_EXCL);
-    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
+    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
 
-    const start = req.i;
-    var link_info = try req.add_empty(@intFromEnum(linux.IFLA.LINKINFO));
-    _ = try req.add_str(c.IFLA_INFO_KIND, @constCast(type_));
+    if (mem.eql(u8, type_, "vlan")) {
+        if (parent == 0) util.fatal("parent device is required\n", .{});
+        const vlan_id_str = args.next() orelse util.fatal("VLAN ID is required\n", .{});
+        const vlan_id = try fmt.parseInt(u16, vlan_id_str, 10);
 
-    link_info.*.len = @intCast(req.i - start);
+        _ = try req.add_int(u32, @intFromEnum(linux.IFLA.LINK), parent);
+
+        var link_info = try req.add_nested(@intFromEnum(linux.IFLA.LINKINFO));
+        {
+            defer link_info.end();
+            _ = try req.add_str(c.IFLA_INFO_KIND, type_);
+
+            var info_data = try req.add_nested(c.IFLA_INFO_DATA);
+            {
+                defer info_data.end();
+                _ = try req.add_int(u16, c.IFLA_VLAN_ID, vlan_id);
+            }
+        }
+    } else {
+        var link_info = try req.add_nested(@intFromEnum(linux.IFLA.LINKINFO));
+        _ = try req.add_str(c.IFLA_INFO_KIND, type_);
+        link_info.end();
+    }
 
     try nlh.send(req);
     _ = try nlh.recv_ack();
@@ -176,7 +205,7 @@ fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
     var req = try nlh.new_req(nl.LinkDelRequest);
-    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
+    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
 
     try nlh.send(req);
     _ = try nlh.recv_ack();
@@ -186,7 +215,7 @@ fn set(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
     var req = try nlh.new_req(nl.LinkNewRequest);
-    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), @constCast(name));
+    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
 
     var any = false;
     while (args.next()) |arg| {
@@ -206,6 +235,6 @@ fn set(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     _ = try nlh.recv_ack();
 
     // mac
-    //_ = try req.add_str(@intFromEnum(linux.IFLA.ADDRESS), @constCast(name));
+    //_ = try req.add_str(@intFromEnum(linux.IFLA.ADDRESS), name);
     //c.mnl_attr_put(nlh, c.IFLA_ADDRESS, addr.len, &addr[0]);
 }

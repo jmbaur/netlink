@@ -47,7 +47,7 @@ pub fn main() !void {
 
                     while (try payload.next()) |attr| {
                         switch (attr.type) {
-                            @intFromEnum(linux.IFLA.IFNAME) => try list.set(index, try fba.allocator().dupe(u8, attr.read_slice())),
+                            @intFromEnum(linux.IFLA.IFNAME) => try list.set(index, try fba.allocator().dupe(u8, attr.slice())),
                             else => {},
                         }
                     }
