@@ -72,7 +72,7 @@ const LINK_TABLE_WIDTH: usize = 60;
 
 pub fn run(args: *process.ArgIterator) !void {
     var buf = [_]u8{0} ** 4096;
-    var sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
+    const sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
     defer os.close(sk);
     var nlh = nl.Handle.init(sk, &buf);
 
@@ -93,7 +93,7 @@ pub fn run(args: *process.ArgIterator) !void {
 }
 
 fn list(nlh: *nl.Handle) !void {
-    var req = try nlh.new_req(nl.LinkListRequest);
+    const req = try nlh.new_req(nl.LinkListRequest);
     req.hdr.*.family = os.AF.PACKET;
     req.nlh.*.flags |= linux.NLM_F_DUMP;
     try nlh.send(req);
@@ -105,7 +105,7 @@ fn list(nlh: *nl.Handle) !void {
         debug.print("unable to flush stdout: {}\n", .{err});
     };
 
-    var stdout = stdout_buffer.writer();
+    const stdout = stdout_buffer.writer();
     try util.writeTableSeparator(stdout, LINK_TABLE_WIDTH);
     try fmt.format(stdout, "| {s:<3} | {s:<15} | {s:<9} | {s:<17} | {s:<2} |\n", .{ "id", "name", "type", "address", "up" });
     try util.writeTableSeparator(stdout, LINK_TABLE_WIDTH);
@@ -162,7 +162,7 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
             var req = try nlh.new_req(nl.LinkGetRequest);
             _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), parent_name);
             try nlh.send(req);
-            var res = try nlh.recv_one(nl.LinkResponse);
+            const res = try nlh.recv_one(nl.LinkResponse);
             break :blk @intCast(res.value.index);
         } else {
             break :blk 0;

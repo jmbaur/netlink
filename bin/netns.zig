@@ -83,11 +83,11 @@ fn unshare(flags: usize) UnshareError!void {
 // unshare -Urn
 fn unshare_map_user(flags: usize) !void {
     var buf: [16]u8 = undefined;
-    var euid = linux.geteuid();
-    var egid = linux.getegid();
+    const euid = linux.geteuid();
+    const egid = linux.getegid();
     try unshare(linux.CLONE.NEWUSER | flags);
     {
-        var data = try fmt.bufPrint(&buf, "0 {} 1", .{euid});
+        const data = try fmt.bufPrint(&buf, "0 {} 1", .{euid});
         var f = try fs.openFileAbsolute("/proc/self/uid_map", .{ .mode = .read_write });
         defer f.close();
         try f.writeAll(data);
@@ -98,7 +98,7 @@ fn unshare_map_user(flags: usize) !void {
         try f.writeAll("deny");
     }
     {
-        var data = try fmt.bufPrint(&buf, "0 {} 1", .{egid});
+        const data = try fmt.bufPrint(&buf, "0 {} 1", .{egid});
         var f = try fs.openFileAbsolute("/proc/self/gid_map", .{ .mode = .read_write });
         defer f.close();
         try f.writeAll(data);
@@ -126,9 +126,9 @@ fn state_dir_path(buf: []u8) ![:0]u8 {
 
 pub fn run(args: *process.ArgIterator) !void {
     var path_buf: [os.PATH_MAX:0]u8 = undefined;
-    var state_path = try state_dir_path(&path_buf);
+    const state_path = try state_dir_path(&path_buf);
 
-    var state_dir = fs.openDirAbsoluteZ(state_path, .{ .access_sub_paths = true }) catch |err| blk: {
+    const state_dir = fs.openDirAbsoluteZ(state_path, .{ .access_sub_paths = true }) catch |err| blk: {
         if (err != error.FileNotFound) return err;
         try fs.makeDirAbsoluteZ(state_path);
         break :blk try fs.openDirAbsoluteZ(state_path, .{ .access_sub_paths = true });
@@ -168,25 +168,22 @@ const NsTime = struct {
 };
 
 fn list(_: *process.ArgIterator, state: fs.Dir) !void {
-    var dir = try state.openIterableDir(".", .{});
-    defer dir.close();
-
     var stdout_buffer = io.bufferedWriter(io.getStdOut().writer());
     defer stdout_buffer.flush() catch |err| {
         debug.print("unable to flush stdout: {}\n", .{err});
     };
 
-    var stdout = stdout_buffer.writer();
+    const stdout = stdout_buffer.writer();
     try util.writeTableSeparator(stdout, NETNS_TABLE_WIDTH);
     try fmt.format(stdout, "| {s:<16} | {s:<10} | {s:<19} |\n", .{ "name", "pid", "created" });
     try util.writeTableSeparator(stdout, NETNS_TABLE_WIDTH);
 
     var pid_buf = [_]u8{0} ** 16;
-    var iter = dir.iterate();
+    var iter = state.iterate();
     while (try iter.next()) |entry| {
         if (entry.kind != .file) continue;
-        const stat = try dir.dir.statFile(entry.name);
-        const pid = try dir.dir.readFile(entry.name, &pid_buf);
+        const stat = try state.statFile(entry.name);
+        const pid = try state.readFile(entry.name, &pid_buf);
         try fmt.format(stdout, "| {s:<16} | {s:<10} | {} |\n", .{ mem.sliceTo(entry.name, '.'), pid, NsTime.init(stat.ctime) });
     }
 
@@ -198,7 +195,7 @@ fn set_id(args: *process.ArgIterator, state: fs.Dir) !void {
     const pid = try get_pid(state, name);
 
     var buf = [_]u8{0} ** 4096;
-    var sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
+    const sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
     defer os.close(sk);
     var nlh = nl.Handle.init(sk, &buf);
 
@@ -206,11 +203,11 @@ fn set_id(args: *process.ArgIterator, state: fs.Dir) !void {
     req.hdr.*.family = os.AF.UNSPEC;
 
     _ = try req.add_int(u32, c.NETNSA_PID, @as(u32, @intCast(pid)));
-    var nsid: i32 = -1;
+    const nsid: i32 = -1;
     _ = try req.add_int(u32, c.NETNSA_NSID, @as(u32, @bitCast(nsid)));
     try nlh.send(req);
 
-    var nlmsg = try nlh.recv_ack();
+    const nlmsg = try nlh.recv_ack();
     debug.print("{}\n", .{nlmsg});
 }
 
@@ -226,7 +223,7 @@ fn add(args: *process.ArgIterator, state: fs.Dir) !void {
     };
     errdefer file.close();
 
-    var pid = try os.fork();
+    const pid = try os.fork();
     if (pid != 0) {
         file.close();
         return;

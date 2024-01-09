@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub fn build(b: *std.Build.Builder) void {
+pub fn build(b: *std.Build) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -13,7 +13,7 @@ pub fn build(b: *std.Build.Builder) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const lib = b.addModule("netlink", .{
-        .source_file = .{ .path = "lib/netlink.zig" },
+        .root_source_file = .{ .path = "lib/netlink.zig" },
     });
 
     const tests = b.addTest(.{
@@ -38,9 +38,9 @@ pub fn build(b: *std.Build.Builder) void {
 
     const exe_options = b.addOptions();
     exe_options.addOption([:0]const u8, "version", "dev");
-    exe.addOptions("build_options", exe_options);
+    exe.root_module.addOptions("build_options", exe_options);
 
-    exe.addModule("netlink", lib);
+    exe.root_module.addImport("netlink", lib);
 
     b.installArtifact(exe);
 
@@ -52,7 +52,7 @@ pub fn build(b: *std.Build.Builder) void {
         .link_libc = true,
     });
 
-    exe_link_list.addModule("netlink", lib);
+    exe_link_list.root_module.addImport("netlink", lib);
 
     b.installArtifact(exe_link_list);
 }

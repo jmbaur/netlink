@@ -25,7 +25,7 @@ const ADDR_TABLE_WIDTH: usize = 64;
 
 pub fn run(args: *process.ArgIterator) !void {
     var buf = [_]u8{0} ** 4096;
-    var sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
+    const sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
     defer os.close(sk);
     var nlh = nl.Handle.init(sk, &buf);
 
@@ -55,8 +55,8 @@ fn formatCidr(writer: anytype, addr: net.Address, len: u8) !u64 {
         linux.AF.INET6 => {
             const big_endian_parts = @as(*align(1) const [8]u16, @ptrCast(&addr.in6.sa.addr));
             const native_endian_parts = switch (native_endian) {
-                .Big => big_endian_parts.*,
-                .Little => blk: {
+                .big => big_endian_parts.*,
+                .little => blk: {
                     var buf: [8]u16 = undefined;
                     for (big_endian_parts, 0..) |part, i| {
                         buf[i] = mem.bigToNative(u16, part);
@@ -93,7 +93,7 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
 
     var links = try LinkNames.initCapacity(arena.allocator(), 8);
     {
-        var req = try nlh.new_req(nl.LinkListRequest);
+        const req = try nlh.new_req(nl.LinkListRequest);
         req.hdr.*.family = os.AF.PACKET;
         req.nlh.*.flags |= linux.NLM_F_DUMP;
         try nlh.send(req);
@@ -107,7 +107,7 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
         }
     }
 
-    var req = try nlh.new_req(nl.AddrListRequest);
+    const req = try nlh.new_req(nl.AddrListRequest);
     req.nlh.*.flags |= linux.NLM_F_DUMP;
     req.hdr.*.family = os.AF.UNSPEC;
     try nlh.send(req);
@@ -179,7 +179,7 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
         var req = try nlh.new_req(nl.LinkGetRequest);
         _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
         try nlh.send(req);
-        var res = try nlh.recv_one(nl.LinkResponse);
+        const res = try nlh.recv_one(nl.LinkResponse);
         break :blk @intCast(res.value.index);
     };
 

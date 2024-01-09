@@ -18,7 +18,7 @@ pub fn main() !void {
     var fba = std.heap.FixedBufferAllocator.init(&mem_buf);
     var list = try LinkNames.initCapacity(fba.allocator(), 8);
 
-    var sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
+    const sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
     var buf = [_]u8{0} ** 4096;
 
     const seq = 0;

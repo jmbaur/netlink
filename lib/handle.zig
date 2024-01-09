@@ -24,7 +24,7 @@ fn MultiResponse(comptime T: type) type {
             }
 
             while (true) {
-                var msg = try self.res.?.next();
+                const msg = try self.res.?.next();
                 switch (msg) {
                     .done => return null,
                     .more => self.res = try self.h.recv(T),
@@ -49,7 +49,7 @@ pub const Handle = struct {
     }
 
     pub fn new_req(self: *Handle, comptime T: type) error{OutOfMemory}!T {
-        var req = try T.init(self.seq, self.buf);
+        const req = try T.init(self.seq, self.buf);
         self.seq += 1;
         req.nlh.*.flags |= linux.NLM_F_ACK;
         return req;
@@ -89,7 +89,7 @@ pub const Handle = struct {
         {
             const n = try os.recv(self.sk, self.buf[i..], 0);
             var res = T.init(self.seq - 1, self.buf[i .. i + n]);
-            var msg = try res.next();
+            const msg = try res.next();
             switch (msg) {
                 .done => return payload,
                 else => return error.InvalidResponse,
@@ -141,6 +141,6 @@ test "pipe to Handle" {
         try expect(false);
     }
 
-    var payload = try res.next();
+    const payload = try res.next();
     try expect(payload == null);
 }

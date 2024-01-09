@@ -67,8 +67,8 @@ test "Attr bit fields" {
         .Little => {
             var actual = [_]u8{ 4, 0, 3, 0 };
             var expected = actual;
-            var end: usize = 4;
-            var attr = try Attr.init_read(actual[0..end]);
+            const end: usize = 4;
+            const attr = try Attr.init_read(actual[0..end]);
 
             try expectEqual(attr.len, 4);
             try expectEqual(attr.type, 3);
@@ -120,7 +120,7 @@ pub fn Request(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) 
         const Self = @This();
 
         pub fn init(seq: u16, buf: []u8) error{OutOfMemory}!Self {
-            var nlh = try put_type(linux.nlmsghdr, buf);
+            const nlh = try put_type(linux.nlmsghdr, buf);
             nlh.*.len = 0; // This will be set when `done()` is called.
             nlh.*.type = nlmsg_type;
             nlh.*.flags = @intCast(linux.NLM_F_REQUEST);
@@ -172,8 +172,8 @@ pub fn Request(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) 
         }
 
         pub fn add_nested(self: *Self, type_: u14) error{OutOfMemory}!NestedAttr {
-            var start = self.i;
-            var attr = try self.add_empty(type_);
+            const start = self.i;
+            const attr = try self.add_empty(type_);
             return NestedAttr{
                 .attr = attr,
                 .start = start,
@@ -315,7 +315,7 @@ test "build RTM_NEWLINK request" {
     var nested_len = nl_align(link_info.attr.len);
 
     {
-        var attr = try req.add_str(IFLA_INFO_KIND, type_);
+        const attr = try req.add_str(IFLA_INFO_KIND, type_);
         const len = @sizeOf(Attr) + type_.len + 1;
         try testing.expectEqual(len, attr.len);
         nested_len += nl_align(attr.len);
@@ -354,7 +354,7 @@ test "parse RTM_NEWLINK response" {
                     switch (attr.type) {
                         c.IFLA_IFNAME => {
                             var name = [_]u8{ 'l', 'o', 0 };
-                            var start: usize = 0;
+                            const start: usize = 0;
                             try expectEqualSlices(u8, name[start..], attr.slice());
                         },
                         else => {},
@@ -380,7 +380,7 @@ test "parse RTM_NEWLINK response" {
                         c.IFLA_IFNAME => {
                             var name: [:0]const u8 = "wlp0s20f3";
                             name.len += 1;
-                            var start: usize = 0;
+                            const start: usize = 0;
                             try expectEqualSlices(u8, name[start..], attr.slice());
                         },
                         else => {},
@@ -393,7 +393,7 @@ test "parse RTM_NEWLINK response" {
         }
     }
     {
-        var msg = try res.next();
+        const msg = try res.next();
         switch (msg) {
             .done => {},
             else => try expect(false),
