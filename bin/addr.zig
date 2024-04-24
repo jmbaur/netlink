@@ -6,7 +6,7 @@ const io = std.io;
 const linux = std.os.linux;
 const mem = std.mem;
 const net = std.net;
-const os = std.os;
+const posix = std.posix;
 const process = std.process;
 
 const c = @cImport({
@@ -25,8 +25,8 @@ const ADDR_TABLE_WIDTH: usize = 64;
 
 pub fn run(args: *process.ArgIterator) !void {
     var buf = [_]u8{0} ** 4096;
-    const sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
-    defer os.close(sk);
+    const sk = try posix.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
+    defer posix.close(sk);
     var nlh = nl.Handle.init(sk, &buf);
 
     const cmd = args.next() orelse "list";
@@ -94,7 +94,7 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
     var links = try LinkNames.initCapacity(arena.allocator(), 8);
     {
         const req = try nlh.new_req(nl.LinkListRequest);
-        req.hdr.*.family = os.AF.PACKET;
+        req.hdr.*.family = linux.AF.PACKET;
         req.nlh.*.flags |= linux.NLM_F_DUMP;
         try nlh.send(req);
 
@@ -109,7 +109,7 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
 
     const req = try nlh.new_req(nl.AddrListRequest);
     req.nlh.*.flags |= linux.NLM_F_DUMP;
-    req.hdr.*.family = os.AF.UNSPEC;
+    req.hdr.*.family = linux.AF.UNSPEC;
     try nlh.send(req);
 
     var res = nlh.recv_all(nl.AddrResponse);

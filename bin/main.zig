@@ -4,7 +4,6 @@ const heap = std.heap;
 const io = std.io;
 const linux = std.os.linux;
 const mem = std.mem;
-const os = std.os;
 const process = std.process;
 
 const addr = @import("addr.zig");
@@ -13,7 +12,7 @@ const netns = @import("netns.zig");
 const util = @import("util.zig");
 
 const usage_main =
-    \\Usage: plog [options]
+    \\Usage: net [options]
     \\
     \\Options:
     \\

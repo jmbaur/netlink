@@ -1,7 +1,7 @@
 const std = @import("std");
 const linux = std.os.linux;
 const mem = std.mem;
-const os = std.os;
+const posix = std.posix;
 
 const c = @cImport({
     @cInclude("linux/if.h");
@@ -18,7 +18,7 @@ pub fn main() !void {
     var fba = std.heap.FixedBufferAllocator.init(&mem_buf);
     var list = try LinkNames.initCapacity(fba.allocator(), 8);
 
-    const sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
+    const sk = try posix.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
     var buf = [_]u8{0} ** 4096;
 
     const seq = 0;
@@ -26,11 +26,11 @@ pub fn main() !void {
 
     req.nlh.*.flags = @intCast(linux.NLM_F_REQUEST | linux.NLM_F_ACK | linux.NLM_F_DUMP);
 
-    req.hdr.*.family = os.AF.PACKET;
-    _ = try os.send(sk, req.done(), 0);
+    req.hdr.*.family = linux.AF.PACKET;
+    _ = try posix.send(sk, req.done(), 0);
 
     recv: while (true) {
-        const n = try os.recv(sk, &buf, 0);
+        const n = try posix.recv(sk, &buf, 0);
         var res = nl.LinkResponse.init(seq, buf[0..n]);
         while (true) {
             var msg = try res.next();

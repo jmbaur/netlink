@@ -103,18 +103,7 @@ while (try res.next()) |payload| {
 There is plenty more example code in the `bin/` directory.
 
 
-## Setup
-
-### Install Zig
-
-```
-$ mkdir -p ~/.local/share/zig ~/.local/bin
-$ curl -sL https://ziglang.org/download/0.11.0/zig-linux-$(uname -m)-0.11.0.tar.xz | tar -C ~/.local/share/zig/ -Jxvf -
-$ ln -sf ~/.local/share/zig/zig-linux-x86_64-0.11.0/zig ~/.local/bin/zig
-```
-
-
-### Dependencies
+## Dependencies
 
  * linux-headers-$(uname -r)
 

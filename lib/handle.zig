@@ -1,6 +1,6 @@
 const std = @import("std");
 const linux = std.os.linux;
-const os = std.os;
+const posix = std.posix;
 
 const message = @import("message.zig");
 
@@ -38,9 +38,9 @@ fn MultiResponse(comptime T: type) type {
 pub const Handle = struct {
     buf: []u8,
     seq: u16,
-    sk: os.socket_t,
+    sk: posix.socket_t,
 
-    pub fn init(sk: os.socket_t, buf: []u8) Handle {
+    pub fn init(sk: posix.socket_t, buf: []u8) Handle {
         return Handle{
             .buf = buf,
             .seq = 1,
@@ -55,8 +55,8 @@ pub const Handle = struct {
         return req;
     }
 
-    fn recv(self: Handle, comptime T: type) os.RecvFromError!T {
-        const n = try os.recv(self.sk, self.buf, 0);
+    fn recv(self: Handle, comptime T: type) posix.RecvFromError!T {
+        const n = try posix.recv(self.sk, self.buf, 0);
         return T.init(self.seq - 1, self.buf[0..n]);
     }
 
@@ -87,7 +87,7 @@ pub const Handle = struct {
         };
 
         {
-            const n = try os.recv(self.sk, self.buf[i..], 0);
+            const n = try posix.recv(self.sk, self.buf[i..], 0);
             var res = T.init(self.seq - 1, self.buf[i .. i + n]);
             const msg = try res.next();
             switch (msg) {
@@ -101,8 +101,8 @@ pub const Handle = struct {
         return MultiResponse(T).init(self);
     }
 
-    pub fn send(self: Handle, req: anytype) os.SendError!void {
-        _ = try os.send(self.sk, req.done(), 0);
+    pub fn send(self: Handle, req: anytype) posix.SendError!void {
+        _ = try posix.send(self.sk, req.done(), 0);
     }
 };
 
@@ -113,18 +113,18 @@ test "pipe to Handle" {
 
     var buf = [_]u8{0} ** 4096;
     var fds = [2]i32{ 0, 0 };
-    const rc = linux.socketpair(linux.AF.UNIX, os.SOCK.SEQPACKET, 0, &fds);
+    const rc = linux.socketpair(linux.AF.UNIX, posix.SOCK.SEQPACKET, 0, &fds);
     try expectEqual(rc, 0);
     defer {
-        os.close(fds[0]);
-        os.close(fds[1]);
+        posix.close(fds[0]);
+        posix.close(fds[1]);
     }
 
     var nlh = Handle.init(fds[0], &buf);
 
-    _ = try os.send(fds[1], @embedFile("testdata/rtm_newlink_1.bin"), 0);
-    _ = try os.send(fds[1], @embedFile("testdata/rtm_newlink_2.bin"), 0);
-    _ = try os.send(fds[1], @embedFile("testdata/rtm_newlink_3.bin"), 0);
+    _ = try posix.send(fds[1], @embedFile("testdata/rtm_newlink_1.bin"), 0);
+    _ = try posix.send(fds[1], @embedFile("testdata/rtm_newlink_2.bin"), 0);
+    _ = try posix.send(fds[1], @embedFile("testdata/rtm_newlink_3.bin"), 0);
 
     const LinkListResponse = message.Response(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
 

@@ -3,9 +3,9 @@ const debug = std.debug;
 const fmt = std.fmt;
 const fs = std.fs;
 const io = std.io;
-const linux = os.linux;
+const linux = std.os.linux;
 const mem = std.mem;
-const os = std.os;
+const posix = std.posix;
 const process = std.process;
 const time = std.time;
 
@@ -26,19 +26,19 @@ const PidFdOpenError = error{
     NoDevice,
     SystemResources,
     ProcessTerminated,
-} || os.UnexpectedError;
+} || posix.UnexpectedError;
 
 fn pidfd_open(pid: linux.pid_t, flags: u32) PidFdOpenError!linux.fd_t {
     debug.assert(flags == 0);
     const rc = linux.pidfd_open(pid, flags);
-    switch (linux.getErrno(rc)) {
+    switch (linux.E.init(rc)) {
         .SUCCESS => return @as(linux.fd_t, @intCast(rc)),
         .NFILE => return error.SystemFdQuotaExceeded,
         .MFILE => return error.ProcessFdQuotaExceeded,
         .NODEV => return error.NoDevice,
         .NOMEM => return error.SystemResources,
         .SRCH => return error.ProcessTerminated,
-        else => |err| return os.unexpectedErrno(err),
+        else => |err| return posix.unexpectedErrno(err),
     }
 }
 
@@ -48,16 +48,16 @@ const SetnsError = error{
     SystemResources,
     PermissionDenied,
     ProcessTerminated,
-} || os.UnexpectedError;
+} || posix.UnexpectedError;
 
 fn setns(fd: linux.fd_t, ns_type: i32) SetnsError!void {
-    switch (os.errno(linux.syscall2(.setns, @as(usize, @bitCast(@as(isize, fd))), @as(usize, @bitCast(@as(isize, ns_type)))))) {
+    switch (linux.E.init(linux.syscall2(.setns, @as(usize, @bitCast(@as(isize, fd))), @as(usize, @bitCast(@as(isize, ns_type)))))) {
         .SUCCESS => return,
         .INVAL => return error.InvalidFlags,
         .NOMEM => return error.SystemResources,
         .PERM => return error.PermissionDenied,
         .SRCH => return error.ProcessTerminated,
-        else => |err| return os.unexpectedErrno(err),
+        else => |err| return posix.unexpectedErrno(err),
     }
 }
 
@@ -66,17 +66,17 @@ const UnshareError = error{
     PermissionDenied,
     SystemResources,
     UserNamespaceLimit,
-} || os.UnexpectedError;
+} || posix.UnexpectedError;
 
 fn unshare(flags: usize) UnshareError!void {
-    switch (os.errno(linux.unshare(flags))) {
+    switch (posix.errno(linux.unshare(flags))) {
         .SUCCESS => return,
         .INVAL => return error.InvalidFlags,
         .NOMEM => return error.SystemResources,
         .NOSPC => return error.SystemResources,
         .PERM => return error.PermissionDenied,
         .USERS => return error.UserNamespaceLimit,
-        else => |err| return os.unexpectedErrno(err),
+        else => |err| return posix.unexpectedErrno(err),
     }
 }
 
@@ -116,22 +116,22 @@ fn sigdelset(set: *linux.sigset_t, sig: u6) void {
 }
 
 fn state_dir_path(buf: []u8) ![:0]u8 {
-    if (os.getenv("XDG_STATE_HOME")) |state_home| {
+    if (posix.getenv("XDG_STATE_HOME")) |state_home| {
         return try fmt.bufPrintZ(buf, "{s}/magic-vm", .{state_home});
     } else {
-        const home = os.getenv("HOME") orelse return error.MissingHome;
+        const home = posix.getenv("HOME") orelse return error.MissingHome;
         return try fmt.bufPrintZ(buf, "{s}/.local/state/net", .{home});
     }
 }
 
 pub fn run(args: *process.ArgIterator) !void {
-    var path_buf: [os.PATH_MAX:0]u8 = undefined;
+    var path_buf: [posix.PATH_MAX:0]u8 = undefined;
     const state_path = try state_dir_path(&path_buf);
 
-    const state_dir = fs.openDirAbsoluteZ(state_path, .{ .access_sub_paths = true }) catch |err| blk: {
+    const state_dir = fs.openDirAbsoluteZ(state_path, .{ .access_sub_paths = true, .iterate = true }) catch |err| blk: {
         if (err != error.FileNotFound) return err;
         try fs.makeDirAbsoluteZ(state_path);
-        break :blk try fs.openDirAbsoluteZ(state_path, .{ .access_sub_paths = true });
+        break :blk try fs.openDirAbsoluteZ(state_path, .{ .access_sub_paths = true, .iterate = true });
     };
 
     const cmd = args.next() orelse "list";
@@ -195,12 +195,12 @@ fn set_id(args: *process.ArgIterator, state: fs.Dir) !void {
     const pid = try get_pid(state, name);
 
     var buf = [_]u8{0} ** 4096;
-    const sk = try os.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
-    defer os.close(sk);
+    const sk = try posix.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
+    defer posix.close(sk);
     var nlh = nl.Handle.init(sk, &buf);
 
     var req = try nlh.new_req(NsidNewRequest);
-    req.hdr.*.family = os.AF.UNSPEC;
+    req.hdr.*.family = linux.AF.UNSPEC;
 
     _ = try req.add_int(u32, c.NETNSA_PID, @as(u32, @intCast(pid)));
     const nsid: i32 = -1;
@@ -223,7 +223,7 @@ fn add(args: *process.ArgIterator, state: fs.Dir) !void {
     };
     errdefer file.close();
 
-    const pid = try os.fork();
+    const pid = try posix.fork();
     if (pid != 0) {
         file.close();
         return;
@@ -233,21 +233,21 @@ fn add(args: *process.ArgIterator, state: fs.Dir) !void {
     try fmt.formatInt(linux.getpid(), 10, .lower, .{}, file.writer());
     file.close();
 
-    var mask = os.empty_sigset;
+    var mask = linux.empty_sigset;
     linux.sigaddset(&mask, linux.SIG.TERM);
-    const sig_fd = try os.signalfd(-1, &mask, 0);
-    defer os.close(sig_fd);
+    const sig_fd = try posix.signalfd(-1, &mask, 0);
+    defer posix.close(sig_fd);
 
     // Block all signals except `SIGTERM`.  Without `sigprocmask()`, other
     // terminating signal such as `SIGINT` will cause `read()` to exit without
     // returning.
     mask = linux.all_mask;
     sigdelset(&mask, linux.SIG.TERM);
-    os.sigprocmask(linux.SIG.SETMASK, &mask, null);
+    posix.sigprocmask(linux.SIG.SETMASK, &mask, null);
 
     // Wait for SIGTERM.
     var buf = [_]u8{0} ** @sizeOf(linux.signalfd_siginfo);
-    const len = try os.read(sig_fd, &buf);
+    const len = try posix.read(sig_fd, &buf);
     debug.assert(len == buf.len);
 
     state.deleteFile(file_name) catch {};
@@ -292,18 +292,18 @@ fn enter(args: *process.ArgIterator, state: fs.Dir) !void {
     const pid = try get_pid(state, name);
     {
         const pidfd = try pidfd_open(pid, 0);
-        defer os.close(pidfd);
+        defer posix.close(pidfd);
         try setns(pidfd, linux.CLONE.NEWUSER | linux.CLONE.NEWNET);
     }
 
-    const shell = os.getenv("SHELL") orelse "/bin/sh";
+    const shell = posix.getenv("SHELL") orelse "/bin/sh";
     const argv = [_:null]?[*:0]const u8{ shell, null };
-    return os.execveZ(shell, &argv, std.c.environ);
+    return posix.execveZ(shell, &argv, std.c.environ);
 }
 
 fn del(args: *process.ArgIterator, state: fs.Dir) !void {
     const name = args.next() orelse util.fatal("name is required\n", .{});
     const pid = try get_pid(state, name);
 
-    try os.kill(pid, linux.SIG.TERM);
+    try posix.kill(pid, linux.SIG.TERM);
 }

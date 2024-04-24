@@ -2,7 +2,7 @@ const std = @import("std");
 const debug = std.debug;
 const linux = std.os.linux;
 const mem = std.mem;
-const os = std.os;
+const posix = std.posix;
 
 fn nl_align(len: usize) usize {
     return mem.alignForward(usize, len, linux.rtattr.ALIGNTO);
@@ -276,7 +276,7 @@ pub fn Response(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type)
                         .NODEV => return error.NoDevice,
                         .OPNOTSUPP => return error.NotSupported,
                         .PERM => return error.AccessDenied,
-                        else => |err| return os.unexpectedErrno(err),
+                        else => |err| return posix.unexpectedErrno(err),
                     }
                 },
                 else => |type_| {
