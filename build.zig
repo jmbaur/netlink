@@ -6,11 +6,11 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const lib = b.addModule("netlink", .{
-        .root_source_file = .{ .path = "lib/netlink.zig" },
+        .root_source_file = b.path("lib/netlink.zig"),
     });
 
     const tests = b.addTest(.{
-        .root_source_file = .{ .path = "lib/netlink.zig" },
+        .root_source_file = b.path("lib/netlink.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "net",
-        .root_source_file = .{ .path = "bin/main.zig" },
+        .root_source_file = b.path("bin/main.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) void {
 
     const exe_link_list = b.addExecutable(.{
         .name = "example-link-list",
-        .root_source_file = .{ .path = "bin/example-link-list.zig" },
+        .root_source_file = b.path("bin/example-link-list.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
