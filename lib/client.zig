@@ -6,6 +6,14 @@ const posix = std.posix;
 
 const msg = @import("message.zig");
 
+/// Create a new client type that implements the netlink protocol as a state
+/// machine.  This is a comptime function so that users of the library can
+/// enumerate all the possible round trips (request + response) that will be
+/// used.  Because of this design, the client code should not require any
+/// changes as new netlink subsystems are added.
+///
+/// This interface is fairly low-level and restrictive.  It is likely that many
+/// users will prefer a higher-level interface.
 pub fn NewClient(comptime round_trips: anytype) type {
     const RoundTripsType = @TypeOf(round_trips);
     const round_trips_type_info = @typeInfo(RoundTripsType);
@@ -35,10 +43,10 @@ pub fn NewClient(comptime round_trips: anytype) type {
             @compileError("client cannot send requests of type " ++ @typeName(Request));
         }
 
-        pub fn reset(self: *Client) void {
-            switch (self) {
-                .done => {},
-                .pending => |pending| self = .{ .done = pending.seq },
+        fn last_req_done(self: *Client) error{AlreadyDone}!void {
+            switch (self.*) {
+                .done => return error.AlreadyDone,
+                .pending => |pending| self.* = .{ .done = pending },
             }
         }
 
@@ -71,6 +79,15 @@ pub fn NewClient(comptime round_trips: anytype) type {
             return fut;
         }
 
+        /// This method is an escape hatch for when the client is in a bad
+        /// state.
+        pub fn reset(self: *Client) void {
+            switch (self) {
+                .done => {},
+                .pending => |pending| self = .{ .done = pending.seq },
+            }
+        }
+
         fn Future(comptime T: type) type {
             return struct {
                 pub const Self = @This();
@@ -92,16 +109,55 @@ pub fn NewClient(comptime round_trips: anytype) type {
                     };
                 }
 
-                //        pub fn one(self: *Self) !Response(T) {
-                //            const res = self.next() orelse return error.ExpectedResponse;
-                //            if (self.next()) |_| return error.UnexpectedResponse;
-                //            return res;
-                //        }
-
                 pub fn ack(self: *Self) !void {
                     if (T != msg.AckResponse) @compileError("Future(T).ack() can only be called on T == AckResponse");
                     _ = try self.next();
                     if (try self.next()) return error.InvalidResponse;
+                }
+
+                fn done(self: *Self) !void {
+                    self.state = .{ .done = void{} };
+                    try self.client.last_req_done();
+                }
+
+                pub fn handle_input_message(self: *Self, hdr: *const linux.nlmsghdr) !bool {
+                    // The client will never expect this type.
+                    if (hdr.type == .DONE) {
+                        // The caller has done something wrong.
+                        debug.assert(hdr.type != linux.NetlinkMessageType.ERROR);
+
+                        if (!self.dump) return error.UnexpectedResponse;
+                        try self.done();
+                        return false;
+                    }
+
+                    if (hdr.type != T.TYPE) return error.UnexpectedResponse;
+
+                    switch (hdr.type) {
+                        .DONE => unreachable,
+                        .ERROR => {
+                            try self.done();
+                            const start: [*]const u8 = @ptrCast(hdr);
+                            const payload: *const msg.nlmsgerr = @ptrCast(@alignCast(start + msg.NLMSG_HDRLEN));
+                            const code = if (payload.*.code >= 0) payload.*.code else -payload.*.code;
+                            const errno: linux.E = @enumFromInt(code);
+                            switch (errno) {
+                                .SUCCESS => {
+                                    return false;
+                                },
+                                .EXIST => return error.AlreadyExists,
+                                .INVAL => return error.InvalidRequest,
+                                .NODEV => return error.NoDevice,
+                                .OPNOTSUPP => return error.NotSupported,
+                                .PERM => return error.AccessDenied,
+                                else => |err| return posix.unexpectedErrno(err),
+                            }
+                        },
+                        else => {
+                            if (self.dump != ((hdr.flags & linux.NLM_F_MULTI) == linux.NLM_F_MULTI)) return error.InvalidResponse;
+                            return true;
+                        },
+                    }
                 }
 
                 pub fn handle_input(self: *Self, buf: []const u8) !void {
@@ -110,8 +166,13 @@ pub fn NewClient(comptime round_trips: anytype) type {
                         .expecting => |seq| {
                             var i: usize = 0;
                             while (i < buf.len) {
-                                const hdr = try msg.parse_nlmsghdr(buf[i..]);
-                                i += msg.nl_align(hdr.len);
+                                // Parse the response here because the `Response.init()` method does
+                                // validation, but throw away everything except the outer header.
+                                const hdr = blk: {
+                                    const res = try T.init(buf[i..]);
+                                    i += res.size();
+                                    break :blk res.nlh;
+                                };
 
                                 // This is not expected, but it should be safe to ignore old
                                 // messages in case the client hit an error or called
@@ -120,44 +181,12 @@ pub fn NewClient(comptime round_trips: anytype) type {
 
                                 if (hdr.seq > seq) return error.UnexpectedResponse;
 
-                                // The client will never expect this type.
-                                if (hdr.type == .DONE) {
-                                    // The caller has done something wrong.
-                                    debug.assert(hdr.type != linux.NetlinkMessageType.ERROR);
-
-                                    if (!self.dump) return error.UnexpectedResponse;
-                                    self.state = .{ .done = void{} };
+                                const should_cont = try self.handle_input_message(hdr);
+                                if (!should_cont) {
                                     if (i < buf.len) return error.UnexpectedResponse;
                                     return;
                                 }
-
-                                if (hdr.type != T.TYPE) return error.UnexpectedResponse;
-
-                                switch (hdr.type) {
-                                    .DONE => unreachable,
-                                    .ERROR => {
-                                        self.state = .{ .done = void{} };
-                                        const payload: *const msg.nlmsgerr = @ptrCast(@alignCast(buf.ptr + i + msg.NLMSG_HDRLEN));
-                                        const code = if (payload.*.code >= 0) payload.*.code else -payload.*.code;
-                                        const errno: linux.E = @enumFromInt(code);
-                                        switch (errno) {
-                                            .SUCCESS => {
-                                                if (i < buf.len) return error.UnexpectedResponse;
-                                                return;
-                                            },
-                                            .EXIST => return error.AlreadyExists,
-                                            .INVAL => return error.InvalidRequest,
-                                            .NODEV => return error.NoDevice,
-                                            .OPNOTSUPP => return error.NotSupported,
-                                            .PERM => return error.AccessDenied,
-                                            else => |err| return posix.unexpectedErrno(err),
-                                        }
-                                    },
-                                    else => {
-                                        if (self.dump != ((hdr.flags & linux.NLM_F_MULTI) == linux.NLM_F_MULTI)) return error.InvalidResponse;
-                                        self.buf = buf[0..i];
-                                    },
-                                }
+                                self.buf = buf[0..i];
                             }
                         },
                     }

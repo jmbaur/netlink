@@ -10,7 +10,7 @@ pub fn nl_align(len: usize) usize {
 
 pub const NLMSG_HDRLEN = nl_align(@sizeOf(linux.nlmsghdr));
 
-pub fn parse_nlmsghdr(buf: []const u8) !*const linux.nlmsghdr {
+fn parse_nlmsghdr(buf: []const u8) !*const linux.nlmsghdr {
     if (buf.len < NLMSG_HDRLEN) return error.OutOfMemory;
     const nlh: *const linux.nlmsghdr = @ptrCast(@alignCast(buf.ptr));
     if (nlh.len < NLMSG_HDRLEN) return error.InvalidMessage;
@@ -24,6 +24,7 @@ pub const nlmsgerr = extern struct {
 };
 
 pub const AckResponse = Response(linux.NetlinkMessageType.ERROR, linux.nlmsghdr);
+pub const AckResponse2 = Response2(linux.NetlinkMessageType.ERROR, linux.nlmsghdr);
 
 pub const Attr = packed struct {
     len: u16,
