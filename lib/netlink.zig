@@ -5,6 +5,8 @@ const linux = std.os.linux;
 pub const message = @import("message.zig");
 pub const Request = message.Request;
 pub const Response = message.Response;
+pub const Response2 = message.Response2;
+pub const NewClient = @import("client.zig").NewClient;
 
 const handle = @import("handle.zig");
 pub const Handle = handle.Handle;

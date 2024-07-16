@@ -4,13 +4,21 @@ const linux = std.os.linux;
 const mem = std.mem;
 const posix = std.posix;
 
-fn nl_align(len: usize) usize {
+pub fn nl_align(len: usize) usize {
     return mem.alignForward(usize, len, linux.rtattr.ALIGNTO);
 }
 
-const NLMSG_HDRLEN = nl_align(@sizeOf(linux.nlmsghdr));
+pub const NLMSG_HDRLEN = nl_align(@sizeOf(linux.nlmsghdr));
 
-const nlmsgerr = extern struct {
+pub fn parse_nlmsghdr(buf: []const u8) !*const linux.nlmsghdr {
+    if (buf.len < NLMSG_HDRLEN) return error.OutOfMemory;
+    const nlh: *const linux.nlmsghdr = @ptrCast(@alignCast(buf.ptr));
+    if (nlh.len < NLMSG_HDRLEN) return error.InvalidMessage;
+    if (nlh.len > buf.len) return error.OutOfMemory;
+    return nlh;
+}
+
+pub const nlmsgerr = extern struct {
     code: c_int,
     msg: linux.nlmsghdr,
 };
@@ -35,10 +43,10 @@ pub const Attr = packed struct {
     pub fn init_write(buf: []u8) error{OutOfMemory}!*Attr {
         if (buf.len < @sizeOf(Attr)) return error.OutOfMemory;
         const attr: *Attr = @ptrCast(@alignCast(buf.ptr));
-        attr.*.len = @intCast(buf.len);
-        attr.*.type = 0;
-        attr.*.net_byteorder = false;
-        attr.*.nested = false;
+        attr.len = @intCast(buf.len);
+        attr.type = 0;
+        attr.net_byteorder = false;
+        attr.nested = false;
         return attr;
     }
 
@@ -112,20 +120,22 @@ fn put_type(comptime T: type, buf: []u8) error{OutOfMemory}!*T {
 
 pub fn Request(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) type {
     return struct {
+        // These fields are meant to be accessed by users.
         nlh: *linux.nlmsghdr,
         hdr: *T,
+        // These fields should be considered private.
         i: usize,
         buf: []u8,
 
         const Self = @This();
 
-        pub fn init(seq: u16, buf: []u8) error{OutOfMemory}!Self {
+        pub fn init(buf: []u8) error{OutOfMemory}!Self {
             const nlh = try put_type(linux.nlmsghdr, buf);
-            nlh.*.len = 0; // This will be set when `done()` is called.
-            nlh.*.type = nlmsg_type;
-            nlh.*.flags = @intCast(linux.NLM_F_REQUEST);
-            nlh.*.seq = seq;
-            nlh.*.pid = 0;
+            nlh.len = 0; // This will be set when `done()` is called.
+            nlh.type = nlmsg_type;
+            nlh.flags = @intCast(linux.NLM_F_REQUEST);
+            nlh.seq = 0;
+            nlh.pid = 0;
             const hdr = try put_type(T, buf[NLMSG_HDRLEN..]);
             const hdr_len = nl_align(@sizeOf(T));
             @memset(buf[NLMSG_HDRLEN..][0..hdr_len], 0);
@@ -136,6 +146,12 @@ pub fn Request(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) 
                 .i = NLMSG_HDRLEN + hdr_len,
                 .buf = buf,
             };
+        }
+
+        pub fn init_seq(seq: u16, buf: []u8) error{OutOfMemory}!Self {
+            const req = try Self.init(buf);
+            req.nlh.seq = seq;
+            return req;
         }
 
         // `nlattr.nla_len` includes the size of the header, but the `len`
@@ -288,6 +304,79 @@ pub fn Response(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type)
                     return Message{ .payload = Payload.init(value, self.buf[attr_start..attr_end]) };
                 },
             }
+        }
+    };
+}
+
+/// This is a read-only iterator for attributes of a response message.
+pub const AttrIter = struct {
+    i: usize,
+    buf: []const u8,
+
+    fn init(buf: []const u8) AttrIter {
+        return AttrIter{ .buf = buf, .i = 0 };
+    }
+
+    pub fn next(self: *AttrIter) !?*Attr {
+        if (self.i >= self.buf.len) return null;
+
+        const attr = try Attr.init_read(@constCast(self.buf[self.i..]));
+        if (attr.len == 0) return error.InvalidResponse;
+
+        self.i += nl_align(attr.len);
+        return attr;
+    }
+};
+
+pub const ParseError = error{
+    InvalidMessage,
+    OutOfMemory,
+};
+
+pub fn Response2(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) type {
+    return struct {
+        // These fields are meant to be accessed by users.
+        nlh: *const linux.nlmsghdr,
+        hdr: *const T,
+        // These fields should be considered private.
+        rest: []const u8,
+
+        const Self = @This();
+
+        pub const TYPE = nlmsg_type;
+
+        pub fn attr_iter(self: Self) AttrIter {
+            return AttrIter.init(self.rest);
+        }
+
+        pub fn attr_table(self: Self, comptime max: usize) [max]?Attr {
+            var table = [_]?Attr{null} * max + 1;
+            var iter = self.attr_iter();
+            while (iter.next()) |attr| {
+                debug.assert(attr.type <= max);
+                table[attr.type] = attr;
+            }
+            return table;
+        }
+
+        pub fn init(buf: []const u8) ParseError!Self {
+            const nlh = try parse_nlmsghdr(buf);
+            if (nlh.type != Self.TYPE) return error.InvalidMessage;
+
+            const hdr_len = NLMSG_HDRLEN + nl_align(@sizeOf(T));
+            if (buf.len < hdr_len) return error.OutOfMemory;
+            if (nlh.len < hdr_len) return error.InvalidMessage;
+
+            const hdr: *const T = @ptrCast(@alignCast(buf.ptr + NLMSG_HDRLEN));
+            return Self{
+                .nlh = nlh,
+                .hdr = hdr,
+                .rest = buf[hdr_len..nlh.len],
+            };
+        }
+
+        pub fn size(self: Self) usize {
+            return nl_align(self.nlh.len);
         }
     };
 }

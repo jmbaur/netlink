@@ -49,7 +49,7 @@ pub const Handle = struct {
     }
 
     pub fn new_req(self: *Handle, comptime T: type) error{OutOfMemory}!T {
-        const req = try T.init(self.seq, self.buf);
+        const req = try T.init_seq(self.seq, self.buf);
         self.seq += 1;
         req.nlh.*.flags |= linux.NLM_F_ACK;
         return req;

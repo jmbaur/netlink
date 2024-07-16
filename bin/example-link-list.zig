@@ -11,7 +11,11 @@ const c = @cImport({
 const nl = @import("netlink");
 const util = @import("util.zig");
 
+const LinkResponse = nl.Response2(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
 const LinkNames = util.SparseList([]u8);
+const Client = nl.NewClient(.{
+    .{ nl.LinkListRequest, LinkResponse },
+});
 
 pub fn main() !void {
     var mem_buf = [_]u8{0} ** 1024;
@@ -21,38 +25,30 @@ pub fn main() !void {
     const sk = try posix.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
     var buf = [_]u8{0} ** 4096;
 
-    const seq = 0;
-    var req = try nl.LinkListRequest.init(seq, &buf);
+    var client = Client.init();
+    var req = try client.new_req(nl.LinkListRequest, &buf);
 
-    req.nlh.*.flags = @intCast(linux.NLM_F_REQUEST | linux.NLM_F_ACK | linux.NLM_F_DUMP);
-
+    req.nlh.*.flags |= @intCast(linux.NLM_F_DUMP);
     req.hdr.*.family = linux.AF.PACKET;
     _ = try posix.send(sk, req.done(), 0);
+    var res = client.sent_req(req);
 
-    recv: while (true) {
+    while (res.needs_more_data()) {
         const n = try posix.recv(sk, &buf, 0);
-        var res = nl.LinkResponse.init(seq, buf[0..n]);
-        while (true) {
-            var msg = try res.next();
-            switch (msg) {
-                .done => break :recv,
-                .more => continue :recv,
-                .payload => |*payload| {
-                    const index: usize = @intCast(payload.value.index);
-                    if ((payload.value.flags & c.IFF_UP) != c.IFF_UP) continue;
-                    switch (payload.value.type) {
-                        c.ARPHRD_ETHER, c.ARPHRD_IPGRE, c.ARPHRD_LOOPBACK, c.ARPHRD_RAWIP, c.ARPHRD_TUNNEL => {},
-                        else => continue,
-                    }
-
-                    while (try payload.next()) |attr| {
-                        switch (attr.type) {
-                            @intFromEnum(linux.IFLA.IFNAME) => try list.set(index, try fba.allocator().dupe(u8, attr.slice())),
-                            else => {},
-                        }
-                    }
-                },
+        try res.handle_input(buf[0..n]);
+        while (try res.next()) |msg| {
+            const index: usize = @intCast(msg.hdr.index);
+            if ((msg.hdr.flags & c.IFF_UP) != c.IFF_UP) continue;
+            switch (msg.hdr.type) {
+                c.ARPHRD_ETHER, c.ARPHRD_IPGRE, c.ARPHRD_LOOPBACK, c.ARPHRD_RAWIP, c.ARPHRD_TUNNEL => {},
+                else => continue,
             }
+
+            var iter = msg.attr_iter();
+            while (try iter.next()) |attr| switch (attr.type) {
+                @intFromEnum(linux.IFLA.IFNAME) => try list.set(index, try fba.allocator().dupe(u8, attr.slice())),
+                else => {},
+            };
         }
     }
 
