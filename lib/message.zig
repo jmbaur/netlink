@@ -33,9 +33,9 @@ pub const Attr = packed struct {
     net_byteorder: bool,
     nested: bool,
 
-    pub fn init_read(buf: []u8) error{OutOfMemory}!*Attr {
+    pub fn init_read(buf: []const u8) error{OutOfMemory}!*const Attr {
         if (buf.len < @sizeOf(Attr)) return error.OutOfMemory;
-        const attr: *Attr = @ptrCast(@alignCast(buf.ptr));
+        const attr: *const Attr = @ptrCast(@alignCast(buf.ptr));
         if (buf.len < attr.len) return error.OutOfMemory;
         return attr;
     }
@@ -60,8 +60,12 @@ pub const Attr = packed struct {
         return @ptrCast(@alignCast(start + @sizeOf(Attr)));
     }
 
-    pub fn slice(self: *Attr) []u8 {
-        const start: [*]u8 = @ptrCast(self);
+    pub fn slice(self: anytype) switch (@TypeOf(self)) {
+        *Attr => []u8,
+        *const Attr => []const u8,
+        else => unreachable,
+    } {
+        const start: [*]u8 = @ptrCast(@constCast(self));
         return start[@sizeOf(Attr)..self.len];
     }
 };
@@ -228,7 +232,7 @@ pub fn Response(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type)
                 return Payload{ .value = value, .attrs = attrs, .i = 0 };
             }
 
-            pub fn next(self: *Payload) !?*Attr {
+            pub fn next(self: *Payload) !?*const Attr {
                 if (self.i >= self.attrs.len) return null;
 
                 const attr = try Attr.init_read(self.attrs[self.i..]);
@@ -317,10 +321,10 @@ pub const AttrIter = struct {
         return AttrIter{ .buf = buf, .i = 0 };
     }
 
-    pub fn next(self: *AttrIter) !?*Attr {
+    pub fn next(self: *AttrIter) !?*const Attr {
         if (self.i >= self.buf.len) return null;
 
-        const attr = try Attr.init_read(@constCast(self.buf[self.i..]));
+        const attr = try Attr.init_read(self.buf[self.i..]);
         if (attr.len == 0) return error.InvalidResponse;
 
         self.i += nl_align(attr.len);
@@ -349,8 +353,8 @@ pub fn Response2(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type
             return AttrIter.init(self.rest);
         }
 
-        pub fn attr_table(self: Self, comptime max: usize) [max]?Attr {
-            var table = [_]?Attr{null} * max + 1;
+        pub fn attr_table(self: Self, comptime max: usize) [max]?*const Attr {
+            var table = [_]?*const Attr{null} * max + 1;
             var iter = self.attr_iter();
             while (iter.next()) |attr| {
                 debug.assert(attr.type <= max);

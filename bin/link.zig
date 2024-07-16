@@ -18,7 +18,7 @@ const util = @import("util.zig");
 
 const Link = struct {
     id: u32,
-    name: ?[]u8,
+    name: ?[]const u8,
     type: u14,
     addr: ?[6]u8,
     up: bool,
@@ -141,7 +141,7 @@ fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const index: u32 = @intCast(res.value.index);
     debug.print("{d:>2}:", .{index});
 
-    var found_name: ?[]u8 = null;
+    var found_name: ?[]const u8 = null;
     while (try res.next()) |attr| {
         switch (attr.type) {
             c.IFLA_IFNAME => {
