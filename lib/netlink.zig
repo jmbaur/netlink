@@ -2,52 +2,28 @@
 const std = @import("std");
 const linux = std.os.linux;
 
-pub const message = @import("message.zig");
+const message = @import("message.zig");
 pub const Request = message.Request;
 pub const Response = message.Response;
 pub const Response2 = message.Response2;
+pub const route = @import("route.zig");
 pub const NewClient = @import("client.zig").NewClient;
+pub const DefaultClient = NewClient(route.DefaultRoundTrips);
 
 const handle = @import("handle.zig");
 pub const Handle = handle.Handle;
 
-pub const ifaddrmsg = extern struct {
-    family: u8,
-    prefixlen: u8,
-    flags: u8,
-    scope: u8,
-    index: u32,
-};
+pub const AddrListRequest = Request(linux.NetlinkMessageType.RTM_GETADDR, route.ifaddrmsg);
+pub const AddrNewRequest = Request(linux.NetlinkMessageType.RTM_NEWADDR, route.ifaddrmsg);
+pub const AddrResponse = Response(linux.NetlinkMessageType.RTM_NEWADDR, route.ifaddrmsg);
 
-pub const rtgenmsg = extern struct {
-    family: u8,
-};
-
-pub const rtmsg = extern struct {
-    family: u8,
-    dst_len: u8,
-    src_len: u8,
-    tos: u8,
-
-    table: u8,
-    protocol: u8,
-    scope: u8,
-    type: u8,
-
-    flags: u16,
-};
-
-pub const AddrListRequest = Request(linux.NetlinkMessageType.RTM_GETADDR, ifaddrmsg);
-pub const AddrNewRequest = Request(linux.NetlinkMessageType.RTM_NEWADDR, ifaddrmsg);
-pub const AddrResponse = Response(linux.NetlinkMessageType.RTM_NEWADDR, ifaddrmsg);
-
-pub const LinkListRequest = Request(linux.NetlinkMessageType.RTM_GETLINK, rtgenmsg);
+pub const LinkListRequest = Request(linux.NetlinkMessageType.RTM_GETLINK, route.rtgenmsg);
 pub const LinkGetRequest = Request(linux.NetlinkMessageType.RTM_GETLINK, linux.ifinfomsg);
 pub const LinkNewRequest = Request(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
 pub const LinkDelRequest = Request(linux.NetlinkMessageType.RTM_DELLINK, linux.ifinfomsg);
 pub const LinkResponse = Response(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
 
-pub const RouteNewRequest = Request(linux.NetlinkMessageType.RTM_NEWROUTE, rtmsg);
+pub const RouteNewRequest = Request(linux.NetlinkMessageType.RTM_NEWROUTE, route.rtmsg);
 
 test {
     std.testing.refAllDecls(@This());

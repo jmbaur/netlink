@@ -18,8 +18,6 @@ const util = @import("util.zig");
 
 const NETNS_TABLE_WIDTH: usize = 53;
 
-const NsidNewRequest = nl.Request(linux.NetlinkMessageType.RTM_NEWNSID, nl.rtgenmsg);
-
 const PidFdOpenError = error{
     SystemFdQuotaExceeded,
     ProcessFdQuotaExceeded,
@@ -199,7 +197,7 @@ fn set_id(args: *process.ArgIterator, state: fs.Dir) !void {
     defer posix.close(sk);
     var nlh = nl.Handle.init(sk, &buf);
 
-    var req = try nlh.new_req(NsidNewRequest);
+    var req = try nlh.new_req(nl.route.NsidNewRequest);
     req.hdr.*.family = linux.AF.UNSPEC;
 
     _ = try req.add_int(u32, c.NETNSA_PID, @as(u32, @intCast(pid)));
