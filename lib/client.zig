@@ -120,26 +120,23 @@ pub fn NewClient(comptime round_trips: anytype) type {
                     try self.client.last_req_done();
                 }
 
-                pub fn handle_input_message(self: *Self, hdr: *const linux.nlmsghdr) !bool {
-                    // The client will never expect this type.
-                    if (hdr.type == .DONE) {
-                        // The caller has done something wrong.
-                        debug.assert(hdr.type != linux.NetlinkMessageType.ERROR);
-
-                        if (!self.dump) return error.UnexpectedResponse;
-                        try self.done();
-                        return false;
-                    }
-
-                    if (hdr.type != T.TYPE) return error.UnexpectedResponse;
-
+                // Used inside the loop of `handle_input()`.  Return value
+                // indicates if the loop should continue or exit early.
+                fn handle_input_message(self: *Self, hdr: *const linux.nlmsghdr) !bool {
                     switch (hdr.type) {
-                        .DONE => unreachable,
+                        .DONE => {
+                            // The caller has done something wrong.
+                            debug.assert(hdr.type != linux.NetlinkMessageType.ERROR);
+
+                            if (!self.dump) return error.UnexpectedResponse;
+                            try self.done();
+                            return false;
+                        },
                         .ERROR => {
                             try self.done();
                             const start: [*]const u8 = @ptrCast(hdr);
                             const payload: *const msg.nlmsgerr = @ptrCast(@alignCast(start + msg.NLMSG_HDRLEN));
-                            const code = if (payload.*.code >= 0) payload.*.code else -payload.*.code;
+                            const code = if (payload.code >= 0) payload.code else -payload.code;
                             const errno: linux.E = @enumFromInt(code);
                             switch (errno) {
                                 .SUCCESS => {
@@ -154,6 +151,7 @@ pub fn NewClient(comptime round_trips: anytype) type {
                             }
                         },
                         else => {
+                            if (hdr.type != T.TYPE) return error.UnexpectedResponse;
                             if (self.dump != ((hdr.flags & linux.NLM_F_MULTI) == linux.NLM_F_MULTI)) return error.InvalidResponse;
                             return true;
                         },
