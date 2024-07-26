@@ -32,6 +32,22 @@ pub const ifa_flags = struct {
     pub const STABLE_PRIVACY = 11;
 };
 
+pub const ATTRS = struct {
+    pub const IFA = enum(u14) {
+        address = 1,
+        local = 2,
+        label = 3,
+        broadcast = 4,
+        anycast = 5,
+        cacheinfo = 6,
+        multicast = 7,
+        flags = 8,
+        rt_priority = 9,
+        target_netnsid = 10,
+        proto = 11,
+    };
+};
+
 pub const NewAddrRequest = msg.Request(@enumFromInt(20), ifaddrmsg);
 pub const DelAddrRequest = msg.Request(@enumFromInt(21), ifaddrmsg);
 pub const GetAddrRequest = msg.Request(@enumFromInt(22), ifaddrmsg);

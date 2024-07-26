@@ -53,6 +53,47 @@ def print_const(const):
     else:
         raise Exception(f'unknown type {const["type"]}')
 
+def print_attr_set(attr_set):
+    if attr_set.name == 'addr-attrs':
+        name = 'ifa'
+    elif attr_set.name == 'ifla-attrs':
+        # conflicts with another name; see linux/if_link.h
+        name = 'ifla-inet'
+    elif attr_set.name == 'ifla6-attrs':
+        name = 'ifla-inet6'
+    elif 'name-prefix' in attr_set.yaml:
+        name = attr_set.yaml['name-prefix'].removesuffix('-')
+    else:
+        name = attr_set.name.removesuffix('-attrs')
+
+    name = sanitize(name).upper()
+
+    print(f'    pub const {name} = enum(u14) {{')
+    if len(attr_set.attrs) == 0:
+        print('        _')
+        print('    };')
+        return
+
+    # Some sets such as rt_addr.attr-addrs do not use a name-prefix
+    parts = sanitize(list(attr_set.attrs.keys())[0]).split('_', 1)
+    if len(parts) == 0:
+        prefix = ''
+    else:
+        prefix = f'{parts[0]}_'
+
+    for name in attr_set.attrs.keys():
+        if not sanitize(name).startswith(prefix):
+            prefix = ''
+            break
+
+    for attr_name, attr in attr_set.items():
+        name = sanitize(attr_name).removeprefix(prefix)
+        if not name[0].isalpha():
+            name = f'@"{name}"'
+        print(f'        {name} = {attr.value},')
+
+    print('    };')
+
 def op_name(name):
     name = sanitize(name).title()
     prefix = name[:3]
@@ -74,6 +115,12 @@ pub const msg = @import("message.zig");''')
     for _, const in spec.consts.items():
         print('')
         print_const(const)
+
+    print('\n pub const ATTRS = struct {')
+    for _, attr_set in spec.attr_sets.items():
+        print('')
+        print_attr_set(attr_set)
+    print('};')
 
     print('')
     for _, op in spec.req_by_value.items():

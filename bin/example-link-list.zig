@@ -4,7 +4,6 @@ const mem = std.mem;
 const posix = std.posix;
 
 const c = @cImport({
-    @cInclude("linux/if.h");
     @cInclude("linux/if_arp.h");
 });
 
@@ -45,7 +44,7 @@ pub fn main() !void {
 
             var iter = msg.attr_iter();
             while (try iter.next()) |attr| switch (attr.type) {
-                @intFromEnum(linux.IFLA.IFNAME) => try list.set(index, try fba.allocator().dupe(u8, attr.slice())),
+                @intFromEnum(nl.link.ATTRS.IFLA.ifname) => try list.set(index, try fba.allocator().dupe(u8, attr.slice())),
                 else => {},
             };
         }

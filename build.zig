@@ -35,6 +35,8 @@ pub fn build(b: *std.Build) void {
 
     exe.root_module.addImport("netlink", lib);
 
+    exe.addIncludePath(.{ .cwd_relative = "/usr/include/x86_64-linux-gnu" });
+
     b.installArtifact(exe);
 
     const exe_link_list = b.addExecutable(.{
@@ -46,6 +48,8 @@ pub fn build(b: *std.Build) void {
     });
 
     exe_link_list.root_module.addImport("netlink", lib);
+
+    exe_link_list.addIncludePath(.{ .cwd_relative = "/usr/include/x86_64-linux-gnu" });
 
     b.installArtifact(exe_link_list);
 }

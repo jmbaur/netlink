@@ -9,7 +9,6 @@ const posix = std.posix;
 const process = std.process;
 
 const c = @cImport({
-    @cInclude("linux/if.h");
     @cInclude("linux/if_arp.h");
 });
 
@@ -111,9 +110,9 @@ fn list(nlh: *nl.Handle) !void {
         var link = Link.init(@intCast(msg.hdr.ifi_index), @truncate(msg.hdr.ifi_type), (msg.hdr.ifi_flags.isSet(nl.link.ifinfo_flags.UP)));
 
         var attrs = msg.attr_iter();
-        while (try attrs.next()) |attr| switch (attr.type) {
-            @intFromEnum(linux.IFLA.IFNAME) => link.name = attr.slice(),
-            @intFromEnum(linux.IFLA.ADDRESS) => {
+        while (try attrs.next()) |attr| switch (@as(nl.link.ATTRS.IFLA, @enumFromInt(attr.type))) {
+            .ifname => link.name = attr.slice(),
+            .address => {
                 const addr = attr.slice();
                 debug.assert(addr.len == 6);
                 link.addr = addr[0..6].*;
@@ -132,22 +131,20 @@ fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
     var req = try nlh.new_req(nl.link.GetLinkRequest);
-    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
+    _ = try req.add_str(@intFromEnum(nl.link.ATTRS.IFLA.ifname), name);
     var msg = try nlh.do(req);
     const index: u32 = @intCast(msg.hdr.ifi_index);
     debug.print("{d:>2}:", .{index});
 
     var found_name: ?[]const u8 = null;
     var attrs = msg.attr_iter();
-    while (try attrs.next()) |attr| {
-        switch (attr.type) {
-            c.IFLA_IFNAME => {
-                found_name = attr.slice();
-                break;
-            },
-            else => {},
-        }
-    }
+    while (try attrs.next()) |attr| switch (@as(nl.link.ATTRS.IFLA, @enumFromInt(attr.type))) {
+        .ifname => {
+            found_name = attr.slice();
+            break;
+        },
+        else => {},
+    };
     debug.print(" {s:<16}\n", .{found_name orelse "<unknown>"});
 }
 
@@ -174,22 +171,23 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
         const vlan_id_str = args.next() orelse util.fatal("VLAN ID is required\n", .{});
         const vlan_id = try fmt.parseInt(u16, vlan_id_str, 10);
 
-        _ = try req.add_int(u32, @intFromEnum(linux.IFLA.LINK), parent);
+        _ = try req.add_int(u32, @intFromEnum(nl.link.ATTRS.IFLA.link), parent);
 
-        var link_info = try req.add_nested(@intFromEnum(linux.IFLA.LINKINFO));
+        var link_info = try req.add_nested(@intFromEnum(nl.link.ATTRS.IFLA.linkinfo));
         {
             defer link_info.end();
-            _ = try req.add_str(c.IFLA_INFO_KIND, type_);
+            _ = try req.add_str(@intFromEnum(nl.link.ATTRS.LINKINFO.kind), type_);
 
-            var info_data = try req.add_nested(c.IFLA_INFO_DATA);
+            var info_data = try req.add_nested(@intFromEnum(nl.link.ATTRS.LINKINFO.data));
             {
                 defer info_data.end();
+                // IFLA_VLAN is not in spec
                 _ = try req.add_int(u16, c.IFLA_VLAN_ID, vlan_id);
             }
         }
     } else {
-        var link_info = try req.add_nested(@intFromEnum(linux.IFLA.LINKINFO));
-        _ = try req.add_str(c.IFLA_INFO_KIND, type_);
+        var link_info = try req.add_nested(@intFromEnum(nl.link.ATTRS.IFLA.linkinfo));
+        _ = try req.add_str(@intFromEnum(nl.link.ATTRS.LINKINFO.kind), type_);
         link_info.end();
     }
 
@@ -200,7 +198,7 @@ fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
     var req = try nlh.new_req(nl.link.DelLinkRequest);
-    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
+    _ = try req.add_str(@intFromEnum(nl.link.ATTRS.IFLA.ifname), name);
 
     try nlh.do_ack(req);
 }
@@ -209,7 +207,7 @@ fn set(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
     var req = try nlh.new_req(nl.link.SetLinkRequest);
-    _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
+    _ = try req.add_str(@intFromEnum(nl.link.ATTRS.IFLA.ifname), name);
 
     var any = false;
     while (args.next()) |arg| {
