@@ -103,9 +103,14 @@ while (try res.next()) |payload| {
 There is plenty more example code in the `bin/` directory.
 
 
-## Dependencies
+## Code Generation
 
- * linux-headers-$(uname -r)
+```
+$ export KERNEL_PATH=...
+$ export PYTHONPATH="${KERNEL_PATH}/tools/net/ynl/lib"
+$ for name in rt_addr rt_link rt_route; do ./gen.py ${KERNEL_PATH}/Documentation/netlink/specs/${name}.yaml > lib/${name}.zig && zig fmt lib/${name}.zig; done
+```
+
 
 
 
