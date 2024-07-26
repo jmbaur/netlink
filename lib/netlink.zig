@@ -5,25 +5,18 @@ const linux = std.os.linux;
 const message = @import("message.zig");
 pub const Request = message.Request;
 pub const Response = message.Response;
-pub const Response2 = message.Response2;
-pub const route = @import("route.zig");
+pub const AckResponse = message.AckResponse;
+
+pub const addr = @import("rt_addr.zig");
+pub const link = @import("rt_link.zig");
+pub const route = @import("rt_route.zig");
+
 pub const NewClient = @import("client.zig").NewClient;
-pub const DefaultClient = NewClient(route.DefaultRoundTrips);
+pub const DefaultOps = addr.Ops ++ link.Ops ++ route.Ops;
+pub const DefaultClient = NewClient(DefaultOps);
 
 const handle = @import("handle.zig");
 pub const Handle = handle.Handle;
-
-pub const AddrListRequest = Request(linux.NetlinkMessageType.RTM_GETADDR, route.ifaddrmsg);
-pub const AddrNewRequest = Request(linux.NetlinkMessageType.RTM_NEWADDR, route.ifaddrmsg);
-pub const AddrResponse = Response(linux.NetlinkMessageType.RTM_NEWADDR, route.ifaddrmsg);
-
-pub const LinkListRequest = Request(linux.NetlinkMessageType.RTM_GETLINK, route.rtgenmsg);
-pub const LinkGetRequest = Request(linux.NetlinkMessageType.RTM_GETLINK, linux.ifinfomsg);
-pub const LinkNewRequest = Request(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
-pub const LinkDelRequest = Request(linux.NetlinkMessageType.RTM_DELLINK, linux.ifinfomsg);
-pub const LinkResponse = Response(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
-
-pub const RouteNewRequest = Request(linux.NetlinkMessageType.RTM_NEWROUTE, route.rtmsg);
 
 test {
     std.testing.refAllDecls(@This());

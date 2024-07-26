@@ -4,9 +4,9 @@ const linux = std.os.linux;
 const posix = std.posix;
 
 const message = @import("message.zig");
-const route = @import("route.zig");
 const client = @import("client.zig");
-const DefaultClient = client.NewClient(route.DefaultRoundTrips);
+
+const DefaultClient = client.NewClient(@import("rt_addr.zig").Ops ++ @import("rt_link.zig").Ops ++ @import("rt_route.zig").Ops);
 
 fn Dump(comptime Future: type) type {
     return struct {

@@ -93,8 +93,8 @@ pub fn run(args: *process.ArgIterator) !void {
 }
 
 fn list(nlh: *nl.Handle) !void {
-    const req = try nlh.new_req(nl.route.LinkListRequest);
-    req.hdr.*.family = linux.AF.PACKET;
+    const req = try nlh.new_req(nl.link.GetLinkRequest);
+    req.hdr.ifi_family = linux.AF.PACKET;
     var res = try nlh.dump(req);
 
     var stdout_buffer = io.bufferedWriter(io.getStdOut().writer());
@@ -108,7 +108,7 @@ fn list(nlh: *nl.Handle) !void {
     try util.writeTableSeparator(stdout, LINK_TABLE_WIDTH);
 
     while (try res.next()) |msg| {
-        var link = Link.init(@intCast(msg.hdr.index), @intCast(msg.hdr.type), (msg.hdr.flags & c.IFF_UP) == c.IFF_UP);
+        var link = Link.init(@intCast(msg.hdr.ifi_index), @truncate(msg.hdr.ifi_type), (msg.hdr.ifi_flags.isSet(nl.link.ifinfo_flags.UP)));
 
         var attrs = msg.attr_iter();
         while (try attrs.next()) |attr| switch (attr.type) {
@@ -131,10 +131,10 @@ fn list(nlh: *nl.Handle) !void {
 fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
-    var req = try nlh.new_req(nl.LinkGetRequest);
+    var req = try nlh.new_req(nl.link.GetLinkRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
     var msg = try nlh.do(req);
-    const index: u32 = @intCast(msg.hdr.index);
+    const index: u32 = @intCast(msg.hdr.ifi_index);
     debug.print("{d:>2}:", .{index});
 
     var found_name: ?[]const u8 = null;
@@ -156,16 +156,16 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const type_ = args.next() orelse util.fatal("link type is required\n", .{});
     const parent: u32 = blk: {
         if (args.next()) |parent_name| {
-            var req = try nlh.new_req(nl.route.LinkGetRequest);
+            var req = try nlh.new_req(nl.link.GetLinkRequest);
             _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), parent_name);
             const msg = try nlh.do(req);
-            break :blk @intCast(msg.hdr.index);
+            break :blk @intCast(msg.hdr.ifi_index);
         } else {
             break :blk 0;
         }
     };
 
-    var req = try nlh.new_req(nl.LinkNewRequest);
+    var req = try nlh.new_req(nl.link.NewLinkRequest);
     req.nlh.*.flags |= (linux.NLM_F_CREATE | linux.NLM_F_EXCL);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
 
@@ -199,7 +199,7 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
-    var req = try nlh.new_req(nl.LinkDelRequest);
+    var req = try nlh.new_req(nl.link.DelLinkRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
 
     try nlh.do_ack(req);
@@ -208,7 +208,7 @@ fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 fn set(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const name = args.next() orelse util.fatal("link name is required\n", .{});
 
-    var req = try nlh.new_req(nl.LinkNewRequest);
+    var req = try nlh.new_req(nl.link.SetLinkRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
 
     var any = false;
@@ -216,8 +216,8 @@ fn set(nlh: *nl.Handle, args: *process.ArgIterator) !void {
         any = true;
 
         if (mem.eql(u8, arg, "up")) {
-            req.hdr.*.change = 1; // IFF_UP
-            req.hdr.*.flags = 1;
+            req.hdr.ifi_flags.set(nl.link.ifinfo_flags.UP);
+            req.hdr.ifi_change = req.hdr.ifi_flags.mask;
         } else {
             util.fatal("unknown attribute {s}\n", .{arg});
         }

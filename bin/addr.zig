@@ -93,19 +93,19 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
 
     var links = try LinkNames.initCapacity(arena.allocator(), 8);
     {
-        const req = try nlh.new_req(nl.route.LinkListRequest);
-        req.hdr.family = linux.AF.PACKET;
+        const req = try nlh.new_req(nl.link.GetLinkRequest);
+        req.hdr.ifi_family = linux.AF.PACKET;
         var res = try nlh.dump(req);
         while (try res.next()) |msg| {
             var attrs = msg.attr_iter();
             while (try attrs.next()) |attr| if (attr.type == @intFromEnum(linux.IFLA.IFNAME)) {
-                try links.set(@intCast(msg.hdr.index), try arena.allocator().dupe(u8, attr.slice()));
+                try links.set(@intCast(msg.hdr.ifi_index), try arena.allocator().dupe(u8, attr.slice()));
             };
         }
     }
 
-    const req = try nlh.new_req(nl.route.AddrListRequest);
-    req.hdr.family = linux.AF.UNSPEC;
+    const req = try nlh.new_req(nl.addr.GetAddrRequest);
+    req.hdr.ifa_family = linux.AF.UNSPEC;
     var res = try nlh.dump(req);
 
     var stdout_buffer = io.bufferedWriter(io.getStdOut().writer());
@@ -119,14 +119,14 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
     try util.writeTableSeparator(stdout, ADDR_TABLE_WIDTH);
 
     while (try res.next()) |msg| {
-        if (msg.hdr.family != linux.AF.INET and msg.hdr.family != linux.AF.INET6) continue;
+        if (msg.hdr.ifa_family != linux.AF.INET and msg.hdr.ifa_family != linux.AF.INET6) continue;
 
         var attrs = msg.attr_iter();
         while (try attrs.next()) |attr| {
             switch (attr.type) {
                 c.IFA_ADDRESS => {
                     const addr = blk: {
-                        if (msg.hdr.family == linux.AF.INET) {
+                        if (msg.hdr.ifa_family == linux.AF.INET) {
                             const bytes = attr.slice();
                             debug.assert(bytes.len == 4);
                             break :blk net.Address.initIp4(bytes[0..4].*, 0);
@@ -137,14 +137,14 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
                         }
                     };
 
-                    if (links.get(msg.hdr.index)) |name| {
+                    if (links.get(msg.hdr.ifa_index)) |name| {
                         // The name is sentinel-terminated, but the sentinel value
                         // takes no width.
                         try fmt.format(stdout, "| {s:<17} | ", .{name});
                     } else {
-                        try fmt.format(stdout, "| {d:<16} | ", .{msg.hdr.index});
+                        try fmt.format(stdout, "| {d:<16} | ", .{msg.hdr.ifa_index});
                     }
-                    const written = try formatCidr(stdout, addr, msg.hdr.prefixlen);
+                    const written = try formatCidr(stdout, addr, msg.hdr.ifa_prefixlen);
                     // Max IPv6 representation is 8 * 4 + 7 = 39
                     try stdout.writeByteNTimes(' ', 43 - written);
                     try stdout.writeAll(" |\n");
@@ -170,19 +170,19 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const addr = try net.Ip4Address.parse(addrStr, 0);
 
     const dev: u32 = blk: {
-        var req = try nlh.new_req(nl.route.LinkGetRequest);
+        var req = try nlh.new_req(nl.link.GetLinkRequest);
         _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
         const res = try nlh.do(req);
-        break :blk @intCast(res.hdr.index);
+        break :blk @intCast(res.hdr.ifi_index);
     };
 
-    var req = try nlh.new_req(nl.route.AddrNewRequest);
+    var req = try nlh.new_req(nl.addr.NewAddrRequest);
     req.nlh.flags |= linux.NLM_F_CREATE;
-    req.hdr.family = linux.AF.INET;
-    req.hdr.prefixlen = len;
-    req.hdr.flags = c.IFA_F_PERMANENT;
-    req.hdr.scope = c.RT_SCOPE_UNIVERSE;
-    req.hdr.index = dev;
+    req.hdr.ifa_family = linux.AF.INET;
+    req.hdr.ifa_prefixlen = len;
+    req.hdr.ifa_flags.set(c.IFA_F_PERMANENT);
+    req.hdr.ifa_scope = c.RT_SCOPE_UNIVERSE;
+    req.hdr.ifa_index = dev;
     _ = try req.add_int(u32, @intCast(c.IFA_LOCAL), addr.sa.addr);
     _ = try req.add_int(u32, @intCast(c.IFA_ADDRESS), addr.sa.addr);
 

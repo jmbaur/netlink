@@ -118,7 +118,7 @@ pub fn Future(comptime Response: type) type {
         }
 
         pub fn ack(self: *Self) !void {
-            if (Response != msg.AckResponse2) @compileError("Future(T).ack() can only be called on T == AckResponse");
+            if (Response != msg.AckResponse) @compileError("Future(T).ack() can only be called on T == AckResponse");
             _ = try self.next();
             debug.assert(self.is_done());
         }

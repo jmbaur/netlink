@@ -11,10 +11,9 @@ const c = @cImport({
 const nl = @import("netlink");
 const util = @import("util.zig");
 
-const LinkResponse = nl.Response2(linux.NetlinkMessageType.RTM_NEWLINK, linux.ifinfomsg);
 const LinkNames = util.SparseList([]u8);
 const Client = nl.NewClient(.{
-    .{ nl.LinkListRequest, LinkResponse },
+    .{ nl.link.GetLinkRequest, nl.link.GetLinkResponse },
 });
 
 pub fn main() !void {
@@ -26,10 +25,10 @@ pub fn main() !void {
     var buf = [_]u8{0} ** 4096;
 
     var client = Client.init();
-    var req = try client.new_req(nl.LinkListRequest, &buf);
+    var req = try client.new_req(nl.link.GetLinkRequest, &buf);
 
-    req.nlh.*.flags |= @intCast(linux.NLM_F_DUMP);
-    req.hdr.*.family = linux.AF.PACKET;
+    req.nlh.flags |= @intCast(linux.NLM_F_DUMP);
+    req.hdr.ifi_family = linux.AF.PACKET;
     _ = try posix.send(sk, req.done(), 0);
     var res = client.sent_req(req);
 
@@ -37,9 +36,9 @@ pub fn main() !void {
         const n = try posix.recv(sk, &buf, 0);
         try res.handle_input(buf[0..n]);
         while (try res.next()) |msg| {
-            const index: usize = @intCast(msg.hdr.index);
-            if ((msg.hdr.flags & c.IFF_UP) != c.IFF_UP) continue;
-            switch (msg.hdr.type) {
+            const index: usize = @intCast(msg.hdr.ifi_index);
+            if (msg.hdr.ifi_flags.isSet(nl.link.ifinfo_flags.UP)) continue;
+            switch (msg.hdr.ifi_type) {
                 c.ARPHRD_ETHER, c.ARPHRD_IPGRE, c.ARPHRD_LOOPBACK, c.ARPHRD_RAWIP, c.ARPHRD_TUNNEL => {},
                 else => continue,
             }

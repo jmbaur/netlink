@@ -24,7 +24,6 @@ pub const nlmsgerr = extern struct {
 };
 
 pub const AckResponse = Response(linux.NetlinkMessageType.ERROR, linux.nlmsghdr);
-pub const AckResponse2 = Response2(linux.NetlinkMessageType.ERROR, linux.nlmsghdr);
 
 pub const Attr = packed struct {
     len: u16,
@@ -217,102 +216,6 @@ pub fn Request(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) 
     };
 }
 
-pub fn Response(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) type {
-    return struct {
-        i: usize,
-        done: bool,
-        buf: []u8,
-        seq: u32,
-
-        pub const Payload = struct {
-            value: *T,
-            attrs: []u8,
-            i: usize,
-
-            fn init(value: *T, attrs: []u8) Payload {
-                return Payload{ .value = value, .attrs = attrs, .i = 0 };
-            }
-
-            pub fn next(self: *Payload) !?*const Attr {
-                if (self.i >= self.attrs.len) return null;
-
-                const attr = try Attr.init_read(self.attrs[self.i..]);
-                if (attr.len == 0) return error.InvalidResponse;
-
-                self.i += nl_align(attr.len);
-                return attr;
-            }
-        };
-
-        pub const Message = union(enum) {
-            done: void,
-            more: void,
-            payload: Payload,
-        };
-
-        const Self = @This();
-
-        pub fn init(seq: u32, buf: []u8) Self {
-            return Self{
-                .i = 0,
-                .done = false,
-                .buf = buf,
-                .seq = seq,
-            };
-        }
-
-        pub fn next(self: *Self) !Message {
-            if (self.done) return Message{ .done = void{} };
-            if (self.i >= self.buf.len) return Message{ .more = void{} };
-
-            if (self.buf.len < @sizeOf(linux.nlmsghdr)) return error.InvalidResponse;
-
-            const start = self.i;
-            const nlh: *linux.nlmsghdr = @ptrCast(@alignCast(self.buf.ptr + start));
-            if (nlh.len < @sizeOf(linux.nlmsghdr) or nlh.len > self.buf.len) return error.InvalidResponse;
-
-            const len = mem.alignForward(usize, nlh.len, linux.rtattr.ALIGNTO);
-            self.*.i += len;
-
-            if (nlh.seq != self.seq) return error.InvalidResponse;
-
-            switch (nlh.*.type) {
-                .DONE => {
-                    self.*.done = true;
-                    return Message{ .done = void{} };
-                },
-                .ERROR => {
-                    const payload: *nlmsgerr = @ptrCast(@alignCast(self.buf.ptr + start + NLMSG_HDRLEN));
-                    const code = if (payload.*.code >= 0) payload.*.code else -payload.*.code;
-                    self.*.done = true;
-                    const errno: linux.E = @enumFromInt(code);
-                    switch (errno) {
-                        .SUCCESS => if (nlmsg_type == linux.NetlinkMessageType.ERROR) {
-                            return Message{ .payload = Payload.init(&payload.*.msg, &[_]u8{}) };
-                        } else {
-                            return Message{ .done = void{} };
-                        },
-                        .EXIST => return error.AlreadyExists,
-                        .INVAL => return error.InvalidRequest,
-                        .NODEV => return error.NoDevice,
-                        .OPNOTSUPP => return error.NotSupported,
-                        .PERM => return error.AccessDenied,
-                        else => |err| return posix.unexpectedErrno(err),
-                    }
-                },
-                else => |type_| {
-                    if (type_ != nlmsg_type) return error.UnexpectedType;
-
-                    const value: *T = @ptrCast(@alignCast(self.buf.ptr + start + NLMSG_HDRLEN));
-                    const attr_start = start + NLMSG_HDRLEN + mem.alignForward(usize, @sizeOf(T), linux.rtattr.ALIGNTO);
-                    const attr_end = start + len;
-                    return Message{ .payload = Payload.init(value, self.buf[attr_start..attr_end]) };
-                },
-            }
-        }
-    };
-}
-
 /// This is a read-only iterator for attributes of a response message.
 pub const AttrIter = struct {
     i: usize,
@@ -338,7 +241,7 @@ pub const ParseError = error{
     OutOfMemory,
 };
 
-pub fn Response2(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) type {
+pub fn Response(comptime nlmsg_type: linux.NetlinkMessageType, comptime T: type) type {
     return struct {
         // These fields are meant to be accessed by users.
         nlh: *const linux.nlmsghdr,

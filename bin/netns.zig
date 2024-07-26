@@ -16,6 +16,11 @@ const c = @cImport({
 const nl = @import("netlink");
 const util = @import("util.zig");
 
+const NsidNewRequest = nl.Request(linux.NetlinkMessageType.RTM_NEWNSID, nl.link.rtgenmsg);
+const Client = nl.NewClient(.{
+    .{ NsidNewRequest, nl.AckResponse },
+});
+
 const NETNS_TABLE_WIDTH: usize = 53;
 
 const PidFdOpenError = error{
@@ -195,15 +200,20 @@ fn set_id(args: *process.ArgIterator, state: fs.Dir) !void {
     var buf = [_]u8{0} ** 4096;
     const sk = try posix.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE);
     defer posix.close(sk);
-    var nlh = nl.Handle.init(sk, &buf);
 
-    var req = try nlh.new_req(nl.route.NsidNewRequest);
+    var client = Client.init();
+    var req = try client.new_req(NsidNewRequest, &buf);
     req.hdr.*.family = linux.AF.UNSPEC;
 
     _ = try req.add_int(u32, c.NETNSA_PID, @as(u32, @intCast(pid)));
     const nsid: i32 = -1;
     _ = try req.add_int(u32, c.NETNSA_NSID, @as(u32, @bitCast(nsid)));
-    try nlh.do_ack(req);
+
+    _ = try posix.send(sk, req.done(), 0);
+    var res = client.sent_req(req);
+    const n = try posix.recv(sk, &buf, 0);
+    try res.handle_input(buf[0..n]);
+    try res.ack();
 }
 
 fn add(args: *process.ArgIterator, state: fs.Dir) !void {
