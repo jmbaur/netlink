@@ -10,7 +10,7 @@ pub fn nl_align(len: usize) usize {
 
 pub const NLMSG_HDRLEN = nl_align(@sizeOf(linux.nlmsghdr));
 
-fn parse_nlmsghdr(buf: []const u8) !*const linux.nlmsghdr {
+pub fn parse_nlmsghdr(buf: []const u8) !*const linux.nlmsghdr {
     if (buf.len < NLMSG_HDRLEN) return error.OutOfMemory;
     const nlh: *const linux.nlmsghdr = @ptrCast(@alignCast(buf.ptr));
     if (nlh.len < NLMSG_HDRLEN) return error.InvalidMessage;
