@@ -203,10 +203,7 @@ fn set_id(args: *process.ArgIterator, state: fs.Dir) !void {
     _ = try req.add_int(u32, c.NETNSA_PID, @as(u32, @intCast(pid)));
     const nsid: i32 = -1;
     _ = try req.add_int(u32, c.NETNSA_NSID, @as(u32, @bitCast(nsid)));
-    try nlh.send(req);
-
-    const nlmsg = try nlh.recv_ack();
-    debug.print("{}\n", .{nlmsg});
+    try nlh.do_ack(req);
 }
 
 fn add(args: *process.ArgIterator, state: fs.Dir) !void {

@@ -93,26 +93,20 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
 
     var links = try LinkNames.initCapacity(arena.allocator(), 8);
     {
-        const req = try nlh.new_req(nl.LinkListRequest);
-        req.hdr.*.family = linux.AF.PACKET;
-        req.nlh.*.flags |= linux.NLM_F_DUMP;
-        try nlh.send(req);
-
-        var res = nlh.recv_all(nl.LinkResponse);
-        while (try res.next()) |payload| {
-            var p = payload;
-            while (try p.next()) |attr| if (attr.type == @intFromEnum(linux.IFLA.IFNAME)) {
-                try links.set(@intCast(payload.value.index), try arena.allocator().dupe(u8, attr.slice()));
+        const req = try nlh.new_req(nl.route.LinkListRequest);
+        req.hdr.family = linux.AF.PACKET;
+        var res = try nlh.dump(req);
+        while (try res.next()) |msg| {
+            var attrs = msg.attr_iter();
+            while (try attrs.next()) |attr| if (attr.type == @intFromEnum(linux.IFLA.IFNAME)) {
+                try links.set(@intCast(msg.hdr.index), try arena.allocator().dupe(u8, attr.slice()));
             };
         }
     }
 
-    const req = try nlh.new_req(nl.AddrListRequest);
-    req.nlh.*.flags |= linux.NLM_F_DUMP;
-    req.hdr.*.family = linux.AF.UNSPEC;
-    try nlh.send(req);
-
-    var res = nlh.recv_all(nl.AddrResponse);
+    const req = try nlh.new_req(nl.route.AddrListRequest);
+    req.hdr.family = linux.AF.UNSPEC;
+    var res = try nlh.dump(req);
 
     var stdout_buffer = io.bufferedWriter(io.getStdOut().writer());
     defer stdout_buffer.flush() catch |err| {
@@ -124,15 +118,15 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
     try fmt.format(stdout, "| {s:<16} | {s:<43} |\n", .{ "name", "address" });
     try util.writeTableSeparator(stdout, ADDR_TABLE_WIDTH);
 
-    while (try res.next()) |payload| {
-        if (payload.value.family != linux.AF.INET and payload.value.family != linux.AF.INET6) continue;
+    while (try res.next()) |msg| {
+        if (msg.hdr.family != linux.AF.INET and msg.hdr.family != linux.AF.INET6) continue;
 
-        var p = payload;
-        while (try p.next()) |attr| {
+        var attrs = msg.attr_iter();
+        while (try attrs.next()) |attr| {
             switch (attr.type) {
                 c.IFA_ADDRESS => {
                     const addr = blk: {
-                        if (payload.value.family == linux.AF.INET) {
+                        if (msg.hdr.family == linux.AF.INET) {
                             const bytes = attr.slice();
                             debug.assert(bytes.len == 4);
                             break :blk net.Address.initIp4(bytes[0..4].*, 0);
@@ -143,14 +137,14 @@ fn list(nlh: *nl.Handle, _: *process.ArgIterator) !void {
                         }
                     };
 
-                    if (links.get(payload.value.index)) |name| {
+                    if (links.get(msg.hdr.index)) |name| {
                         // The name is sentinel-terminated, but the sentinel value
                         // takes no width.
                         try fmt.format(stdout, "| {s:<17} | ", .{name});
                     } else {
-                        try fmt.format(stdout, "| {d:<16} | ", .{payload.value.index});
+                        try fmt.format(stdout, "| {d:<16} | ", .{msg.hdr.index});
                     }
-                    const written = try formatCidr(stdout, addr, payload.value.prefixlen);
+                    const written = try formatCidr(stdout, addr, msg.hdr.prefixlen);
                     // Max IPv6 representation is 8 * 4 + 7 = 39
                     try stdout.writeByteNTimes(' ', 43 - written);
                     try stdout.writeAll(" |\n");
@@ -176,23 +170,21 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const addr = try net.Ip4Address.parse(addrStr, 0);
 
     const dev: u32 = blk: {
-        var req = try nlh.new_req(nl.LinkGetRequest);
+        var req = try nlh.new_req(nl.route.LinkGetRequest);
         _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
-        try nlh.send(req);
-        const res = try nlh.recv_one(nl.LinkResponse);
-        break :blk @intCast(res.value.index);
+        const res = try nlh.do(req);
+        break :blk @intCast(res.hdr.index);
     };
 
-    var req = try nlh.new_req(nl.AddrNewRequest);
-    req.nlh.*.flags |= linux.NLM_F_CREATE;
-    req.hdr.*.family = linux.AF.INET;
-    req.hdr.*.prefixlen = len;
-    req.hdr.*.flags = c.IFA_F_PERMANENT;
-    req.hdr.*.scope = c.RT_SCOPE_UNIVERSE;
-    req.hdr.*.index = dev;
+    var req = try nlh.new_req(nl.route.AddrNewRequest);
+    req.nlh.flags |= linux.NLM_F_CREATE;
+    req.hdr.family = linux.AF.INET;
+    req.hdr.prefixlen = len;
+    req.hdr.flags = c.IFA_F_PERMANENT;
+    req.hdr.scope = c.RT_SCOPE_UNIVERSE;
+    req.hdr.index = dev;
     _ = try req.add_int(u32, @intCast(c.IFA_LOCAL), addr.sa.addr);
     _ = try req.add_int(u32, @intCast(c.IFA_ADDRESS), addr.sa.addr);
 
-    try nlh.send(req);
-    _ = try nlh.recv_ack();
+    try nlh.do_ack(req);
 }

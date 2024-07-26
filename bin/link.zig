@@ -93,12 +93,9 @@ pub fn run(args: *process.ArgIterator) !void {
 }
 
 fn list(nlh: *nl.Handle) !void {
-    const req = try nlh.new_req(nl.LinkListRequest);
+    const req = try nlh.new_req(nl.route.LinkListRequest);
     req.hdr.*.family = linux.AF.PACKET;
-    req.nlh.*.flags |= linux.NLM_F_DUMP;
-    try nlh.send(req);
-
-    var res = nlh.recv_all(nl.LinkResponse);
+    var res = try nlh.dump(req);
 
     var stdout_buffer = io.bufferedWriter(io.getStdOut().writer());
     defer stdout_buffer.flush() catch |err| {
@@ -110,11 +107,11 @@ fn list(nlh: *nl.Handle) !void {
     try fmt.format(stdout, "| {s:<3} | {s:<15} | {s:<9} | {s:<17} | {s:<2} |\n", .{ "id", "name", "type", "address", "up" });
     try util.writeTableSeparator(stdout, LINK_TABLE_WIDTH);
 
-    while (try res.next()) |payload| {
-        var link = Link.init(@intCast(payload.value.index), @intCast(payload.value.type), (payload.value.flags & c.IFF_UP) == c.IFF_UP);
+    while (try res.next()) |msg| {
+        var link = Link.init(@intCast(msg.hdr.index), @intCast(msg.hdr.type), (msg.hdr.flags & c.IFF_UP) == c.IFF_UP);
 
-        var p = payload;
-        while (try p.next()) |attr| switch (attr.type) {
+        var attrs = msg.attr_iter();
+        while (try attrs.next()) |attr| switch (attr.type) {
             @intFromEnum(linux.IFLA.IFNAME) => link.name = attr.slice(),
             @intFromEnum(linux.IFLA.ADDRESS) => {
                 const addr = attr.slice();
@@ -136,13 +133,13 @@ fn get(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 
     var req = try nlh.new_req(nl.LinkGetRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
-    try nlh.send(req);
-    var res = try nlh.recv_one(nl.LinkResponse);
-    const index: u32 = @intCast(res.value.index);
+    var msg = try nlh.do(req);
+    const index: u32 = @intCast(msg.hdr.index);
     debug.print("{d:>2}:", .{index});
 
     var found_name: ?[]const u8 = null;
-    while (try res.next()) |attr| {
+    var attrs = msg.attr_iter();
+    while (try attrs.next()) |attr| {
         switch (attr.type) {
             c.IFLA_IFNAME => {
                 found_name = attr.slice();
@@ -159,11 +156,10 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     const type_ = args.next() orelse util.fatal("link type is required\n", .{});
     const parent: u32 = blk: {
         if (args.next()) |parent_name| {
-            var req = try nlh.new_req(nl.LinkGetRequest);
+            var req = try nlh.new_req(nl.route.LinkGetRequest);
             _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), parent_name);
-            try nlh.send(req);
-            const res = try nlh.recv_one(nl.LinkResponse);
-            break :blk @intCast(res.value.index);
+            const msg = try nlh.do(req);
+            break :blk @intCast(msg.hdr.index);
         } else {
             break :blk 0;
         }
@@ -197,8 +193,7 @@ fn add(nlh: *nl.Handle, args: *process.ArgIterator) !void {
         link_info.end();
     }
 
-    try nlh.send(req);
-    _ = try nlh.recv_ack();
+    try nlh.do_ack(req);
 }
 
 fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {
@@ -207,8 +202,7 @@ fn del(nlh: *nl.Handle, args: *process.ArgIterator) !void {
     var req = try nlh.new_req(nl.LinkDelRequest);
     _ = try req.add_str(@intFromEnum(linux.IFLA.IFNAME), name);
 
-    try nlh.send(req);
-    _ = try nlh.recv_ack();
+    try nlh.do_ack(req);
 }
 
 fn set(nlh: *nl.Handle, args: *process.ArgIterator) !void {
@@ -231,8 +225,7 @@ fn set(nlh: *nl.Handle, args: *process.ArgIterator) !void {
 
     if (!any) util.fatal("must provide one or more attributes\n", .{});
 
-    try nlh.send(req);
-    _ = try nlh.recv_ack();
+    try nlh.do_ack(req);
 
     // mac
     //_ = try req.add_str(@intFromEnum(linux.IFLA.ADDRESS), name);

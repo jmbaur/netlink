@@ -1,108 +1,88 @@
 const std = @import("std");
+const debug = std.debug;
 const linux = std.os.linux;
 const posix = std.posix;
 
 const message = @import("message.zig");
+const route = @import("route.zig");
+const client = @import("client.zig");
+const DefaultClient = client.NewClient(route.DefaultRoundTrips);
 
-fn MultiResponse(comptime T: type) type {
+fn Dump(comptime Future: type) type {
     return struct {
-        h: Handle,
-        res: ?T,
-
         const Self = @This();
 
-        fn init(h: Handle) Self {
+        h: *Handle,
+        fut: Future,
+
+        fn init(h: *Handle, fut: Future) Self {
             return Self{
                 .h = h,
-                .res = null,
+                .fut = fut,
             };
         }
 
-        pub fn next(self: *Self) !?T.Payload {
-            if (self.res == null) {
-                self.res = try self.h.recv(T);
+        pub fn next(self: *Self) !?Future.Inner {
+            if (self.fut.is_done()) return null;
+
+            if (self.fut.needs_more_data()) {
+                try self.h.recv(&self.fut);
             }
 
-            while (true) {
-                const msg = try self.res.?.next();
-                switch (msg) {
-                    .done => return null,
-                    .more => self.res = try self.h.recv(T),
-                    .payload => |payload| return payload,
-                }
-            }
+            return self.fut.next();
         }
     };
 }
 
 pub const Handle = struct {
+    client: DefaultClient,
     buf: []u8,
-    seq: u16,
     sk: posix.socket_t,
 
     pub fn init(sk: posix.socket_t, buf: []u8) Handle {
         return Handle{
+            .client = DefaultClient.init(),
             .buf = buf,
-            .seq = 1,
             .sk = sk,
         };
     }
 
-    pub fn new_req(self: *Handle, comptime T: type) error{OutOfMemory}!T {
-        const req = try T.init_seq(self.seq, self.buf);
-        self.seq += 1;
-        req.nlh.*.flags |= linux.NLM_F_ACK;
-        return req;
+    pub fn new_req(self: *Handle, comptime T: type) !T {
+        return self.client.new_req(T, self.buf);
     }
 
-    fn recv(self: Handle, comptime T: type) posix.RecvFromError!T {
+    //fn recv(self: *Handle, res: anytype) posix.RecvFromError!void {
+    fn recv(self: *Handle, res: anytype) !void {
+        debug.assert(res.needs_more_data());
         const n = try posix.recv(self.sk, self.buf, 0);
-        return T.init(self.seq - 1, self.buf[0..n]);
+        try res.handle_input(self.buf[0..n]);
     }
 
-    pub fn recv_ack(self: Handle) !*linux.nlmsghdr {
-        var res = try self.recv(message.AckResponse);
-        switch (try res.next()) {
-            .payload => |payload| switch (try res.next()) {
-                .done => return payload.value,
-                else => return error.InvalidResponse,
-            },
-            else => return error.InvalidResponse,
-        }
-    }
-
-    pub fn recv_one(self: Handle, comptime T: type) !T.Payload {
-        // The ack response is always sent separately.
-        var i: usize = 0;
-        const payload = blk: {
-            var res = try self.recv(T);
-            i = res.buf.len;
-            switch (try res.next()) {
-                .payload => |payload| switch (try res.next()) {
-                    .more => break :blk payload,
-                    else => return error.InvalidResponse,
-                },
-                else => return error.InvalidResponse,
-            }
-        };
-
-        {
-            const n = try posix.recv(self.sk, self.buf[i..], 0);
-            var res = T.init(self.seq - 1, self.buf[i .. i + n]);
-            const msg = try res.next();
-            switch (msg) {
-                .done => return payload,
-                else => return error.InvalidResponse,
-            }
-        }
-    }
-
-    pub fn recv_all(self: Handle, comptime T: type) MultiResponse(T) {
-        return MultiResponse(T).init(self);
-    }
-
-    pub fn send(self: Handle, req: anytype) posix.SendError!void {
+    //pub fn do(self: *Handle, req: anytype) posix.SendError!@TypeOf(self.client).req_to_res(@TypeOf(req)) {
+    pub fn do(self: *Handle, req: anytype) !@TypeOf(self.client).req_to_res(@TypeOf(req)) {
         _ = try posix.send(self.sk, req.done(), 0);
+        var res = self.client.sent_req(req);
+        try self.recv(&res);
+        const msg = try res.next();
+        if (msg == null) return error.InvalidResponse;
+        debug.assert(res.is_done());
+        return msg.?;
+    }
+
+    //pub fn do_ack(self: *Handle, req: anytype) posix.SendError!void {
+    pub fn do_ack(self: *Handle, req: anytype) !void {
+        _ = try posix.send(self.sk, req.done(), 0);
+        var res = self.client.sent_req(req);
+        try self.recv(&res);
+        try res.ack();
+    }
+
+    //pub fn dump(self: *Handle, req: anytype) posix.SendError!Dump(client.Future(DefaultClient.req_to_res(@TypeOf(req)))) {
+    pub fn dump(self: *Handle, req: anytype) !Dump(client.Future(DefaultClient.req_to_res(@TypeOf(req)))) {
+        req.nlh.flags |= linux.NLM_F_DUMP;
+        _ = try posix.send(self.sk, req.done(), 0);
+        const res = self.client.sent_req(req);
+        return Dump(@TypeOf(res)).init(self, res);
     }
 };
 
